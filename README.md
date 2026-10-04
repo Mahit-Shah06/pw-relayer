@@ -1,6 +1,6 @@
 # pw-relayer
 
-A dependency-free Node.js 22 HTTP connector, HLS relay, and local file store. Configure direct media, document, or data URLs. Includes an owner-only PW login page with OTP and existing-session import. The PW adapter follows the request format in the existing local PW client; it is not a documented public integration and has not been validated with a real PW account. Course discovery, token renewal, DRM handling, and a viewer/player are not implemented.
+A dependency-free Node.js 22 HTTP connector, HLS relay, and local file store. Configure direct media, document, or data URLs. Includes an owner-only PW login page with OTP and existing-session import. The PW adapter follows the request format in the existing local PW client; it is not a documented public integration and has not been validated with a real PW account. Automatic renewal is supported when a valid PW refresh token is available. Course discovery, DRM handling, and a viewer/player are not implemented.
 
 ## Start on a VPS
 
@@ -123,7 +123,7 @@ These formats were found in the user's existing local PW client, not a public pa
 
 Limits: at most one OTP request per minute, five verification attempts per challenge, and a five-minute local challenge lifetime. Phone/OTP payloads are held only for the active request/challenge and are not logged. Only the last four phone digits are saved. PW tokens never appear in browser responses. The access token is encrypted with AES-256-GCM in `data/.pw-session.enc` using a key derived from `ACCESS_TOKEN`; that file has mode 0600. Keep your `.env` and volume private and back up them together. Changing `ACCESS_TOKEN` makes the old saved session unreadable; connect again to replace it.
 
-“Connected” means a token was returned and saved, and its known expiry has not elapsed; it is not continuous confirmation that PW still accepts the token. Automatic token refresh is not implemented. Revoked/expired sessions require login again. “Sign out” ends browser access while preserving the stored PW session. “Remove saved PW session” deletes this relay's local token, not PW sessions on other devices.
+“Connected” means a token was returned and saved, and its known expiry has not elapsed; it is not continuous confirmation that PW still accepts the token. With a refresh token, the relay attempts automatic renewal. Without one, or if PW revokes/rejects renewal, you must connect again. “Sign out” ends browser access while preserving the stored PW session. “Remove saved PW session” deletes this relay's local token, not PW sessions on other devices.
 
 Login alone does not import batches or produce stream URLs. Configured PW API sources can opt into the saved token with `"auth": "pw"`; batch discovery and content importing remain separate work.
 
@@ -160,6 +160,35 @@ If OTP login is rejected, use **Existing session** after unlocking your private 
 
 The form accepts a raw token, `Bearer <token>`, or `Authorization: Bearer <token>`. It sends the credential only to this relay; the relay verifies it against the fixed PW token-verification endpoint. Redirects are refused. It requires `success: true` and `data.isVerified: true` before replacing the saved session. Invalid, expired, rejected, or unconfirmed tokens are not saved; the previous saved session remains intact. Verification is limited to one attempt per five seconds. Your token is cleared from the form after submission, is not saved in localStorage, is not logged or echoed, and is encrypted in the existing session file.
 
-Treat the copied value like a password. Paste it only into your own HTTPS relay, never into chat or a GitHub issue. It may expire, be revoked, or be bound to PW's original device/session context. Import cannot guarantee PW will accept the token from your VPS, and does not automatically renew it. Expiry is shown when the token contains an expiry claim; otherwise it is unknown.
+Treat the copied value like a password. Paste it only into your own HTTPS relay, never into chat or a GitHub issue. It may expire, be revoked, or be bound to PW's original device/session context. Import cannot guarantee PW will accept the token from your VPS. An access-only import cannot renew itself; provide the matching refresh token to configure automatic renewal. Expiry is shown when the token contains an expiry claim; otherwise it is unknown.
 
 The existing-session flow uses `POST /admin/api/pw/import-token`, guarded by owner authentication, CSRF checks, and the same-origin policy. Its upstream verification request follows the public PW SDK format: `POST /v3/oauth/verify-token` with organization and random-device context. The current public SDK also supplies `client-type: WEB` and an organization `client-id` header; these headers are now included in all PW authentication requests. This fixes a request-format difference but has not been verified to resolve the live OTP 403. No real SMS was sent during these changes.
+
+
+## Automatic renewal
+
+Update the VPS and reload the PM2 configuration (the shutdown grace period now allows time to finish a renewal):
+
+```sh
+git pull --ff-only
+npm test
+pm2 startOrRestart ecosystem.config.cjs --only pw-relayer
+pm2 save
+```
+
+For an already saved access-only session, click **Update saved session**. Paste a fresh access token and the matching **refresh_token** from PW's successful login response (Network → `oauth/token` → Response), or the same session's `TOKEN_CONTEXT`. You may need to log in once on PW with Developer Tools open to capture that response. If available, supply the original `randomId` under Optional device context. Click **Verify & save session**, then **Test renewal now** to check whether PW accepts renewal from your VPS. A successful access-token verification does not prove the refresh token is valid; the UI explicitly shows when the first renewal is still unverified.
+
+Successful OTP login now retains `refresh_token` automatically when PW returns one. Previously saved access-only sessions cannot acquire a refresh token by themselves.
+
+- The server checks every 30 seconds and on startup. When expiry is known, it attempts renewal shortly before expiry (up to two minutes early).
+- PW-authenticated relay/file requests wait for a due renewal before fetching. After an upstream 401, they may trigger one renewal and retry the request once. An arbitrary 403 does not trigger renewal.
+- Concurrent renewals share one request. Manual renewals have a 30-second cooldown.
+- Rotated access and refresh tokens are encrypted and atomically saved. If PW omits a replacement refresh token, the current one is retained.
+- Network/5xx/rate-limit failures preserve the current session and use exponential backoff from one minute to fifteen minutes. Backoff survives restart. An unexpired access token can still be used during a temporary renewal failure.
+- Rejected/revoked credentials, security challenges, or invalid renewal responses stop renewal and show **Login required**. They are not retried indefinitely.
+- If expiry is unknown, renewal is reactive to a 401 or the manual test; the server does not guess a token lifetime. This is only for sources explicitly configured with `"auth":"pw"`.
+- The UI reports the last successful renewal, retry time, and whether a refresh token is available. No credentials are included in the status API or logs.
+
+The refresh request follows PW's public web SDK: `POST https://api.penpencil.co/v3/oauth/refresh-token`, with `client_id`, `refresh_token`, and `client_secret` when configured. `PW_CLIENT_ID` defaults to `system-admin`. If your PW client requires a client secret, set `PW_CLIENT_SECRET` privately in `.env` using the client configuration from your own official PW login request, then restart the process. This is separate from the account access/refresh tokens; do not commit it or send it in chat. The connector does not invent or bypass client credentials. Missing required client configuration can cause renewal to be rejected.
+
+Renewal is covered by simulated provider tests; live PW acceptance still needs the **Test renewal now** check with your session. Signing out, account restrictions, token rotation on another device, or PW security checks can still require another login. Do not run multiple relay instances against the same session directory. A disk-write failure after provider rotation is reported as a storage failure; fix storage and reconnect before relying on persistence.

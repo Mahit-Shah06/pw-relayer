@@ -35,6 +35,9 @@
           <form id="token-form">
             <label for="pw-token">PW Authorization value</label>
             <input id="pw-token" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="16000" required placeholder="Bearer eyJ… or the token alone">
+            <label for="pw-refresh-token">Refresh token <span class="hint">· enables automatic renewal</span></label>
+            <input id="pw-refresh-token" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="16000" placeholder="Paste refresh_token from the same PW session">
+            <details><summary>Optional device context</summary><label for="pw-device-id">PW randomId</label><input id="pw-device-id" type="text" autocomplete="off" maxlength="128" placeholder="Original session randomId, if available"></details>
             <button type="submit">Verify &amp; save session</button>
           </form>
           <p class="hint">We verify the session with PW and store it encrypted on your VPS. Keep this value private; it grants access to your account.</p>
@@ -43,10 +46,11 @@
               <li>Open <a href="https://www.pw.live/" target="_blank" rel="noopener noreferrer">PW’s official site</a> and finish login there.</li>
               <li>Open your browser’s Developer Tools → Network. Reload PW and open a request to <code>api.penpencil.co</code>.</li>
               <li>Under Request Headers, copy the <code>Authorization</code> value. Choose a request from your logged-in account, not a public asset.</li>
-              <li>Paste only that value above. Do not copy all headers or share the token in chat.</li>
+              <li>Paste that value into the first field. For renewal, also copy <code>refresh_token</code> from the same session’s login response (Network → <code>oauth/token</code> → Response) or PW’s stored <code>TOKEN_CONTEXT</code>. You may need to sign in on PW once with Network open to capture it.</li>
+              <li>If available, copy the same session’s <code>randomId</code> into Optional device context. Keep all these values private.</li>
             </ol>
           </details>
-          <p class="hint">A token may expire or be tied to a device. If PW rejects it, nothing is saved.</p>
+          <p class="hint">Access-only login expires. With a refresh token, the relay can attempt renewal; PW can still revoke or reject the session.</p>
         </div>
         <div id="otp-panel" hidden>
         <h2>Connect with an OTP</h2><p>Enter the mobile number you use for PW. We’ll submit your login request to PW from this server.</p>
@@ -55,7 +59,7 @@
         <p class="hint">PW may reject server-side OTP requests or require a CAPTCHA. If that happens, sign in on PW and use Existing session.</p>
         </div>
       </div>
-      <div id="connected-panel" hidden><span class="badge">CONNECTED</span><h2>Your session is saved.</h2><p id="account-detail"></p><p id="session-expiry" class="hint"></p><p>The PW token is encrypted on your VPS and survives restarts.</p><div class="note">Login is ready. Browsing batches and importing lectures or PDFs is the next integration step.</div><button id="disconnect" type="button" class="secondary">Remove saved PW session</button><p class="hint">This removes this relay’s copy. It does not sign you out of PW elsewhere.</p></div>
+      <div id="connected-panel" hidden><span class="badge">CONNECTED</span><h2>Your session is saved.</h2><p id="account-detail"></p><p id="session-expiry" class="hint"></p><div id="renewal-status" class="note" role="status"></div><button id="renew-now" type="button" class="secondary" hidden>Test renewal now</button><button id="replace-session" type="button" class="text-button replace-session">Update saved session</button><p>The PW token is encrypted on your VPS and survives restarts.</p><div class="note">Login is ready. Browsing batches and importing lectures or PDFs is the next integration step.</div><button id="disconnect" type="button" class="secondary">Remove saved PW session</button><p class="hint">This removes this relay’s copy. It does not sign you out of PW elsewhere.</p></div>
     </section>
     <p id="message" role="status" aria-live="polite">Loading login…</p>
     </div>

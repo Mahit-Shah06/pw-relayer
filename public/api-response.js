@@ -2,7 +2,7 @@ export class ApiError extends Error {
   constructor(message, status) { super(message); this.status = status; }
 }
 export async function parseApiResponse(response, route) {
-  const names = { session: 'Login check', login: 'Owner login', logout: 'Sign out', 'pw/send-otp': 'Send OTP', 'pw/verify-otp': 'Verify OTP', 'pw/disconnect': 'Remove PW session', 'pw/import-token': 'Verify PW session' };
+  const names = { session: 'Login check', login: 'Owner login', logout: 'Sign out', 'pw/send-otp': 'Send OTP', 'pw/verify-otp': 'Verify OTP', 'pw/disconnect': 'Remove PW session', 'pw/import-token': 'Verify PW session', 'pw/refresh': 'Renew PW session' };
   const label = names[route] || 'Request';
   const type = response.headers.get('content-type') || '';
   const text = await response.text();

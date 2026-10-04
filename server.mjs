@@ -9,7 +9,7 @@ import { createHmac, timingSafeEqual, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export function createApp({ configPath = process.env.CONFIG_PATH || './sources.json', dataDir = process.env.DATA_DIR || './data', token = process.env.ACCESS_TOKEN, pwRequest = fetch, interval = Number(process.env.SYNC_INTERVAL_SECONDS || 300) * 1000 } = {}) {
+export function createApp({ configPath = process.env.CONFIG_PATH || './sources.json', dataDir = process.env.DATA_DIR || './data', token = process.env.ACCESS_TOKEN, pwRequest = fetch, sourceRequest = fetch, interval = Number(process.env.SYNC_INTERVAL_SECONDS || 300) * 1000 } = {}) {
   if (!token || token.length < 32) throw new Error('ACCESS_TOKEN must contain at least 32 characters');
   if (!Number.isFinite(interval) || interval < 1000) throw new Error('Invalid sync interval');
   const pw = createPwAuth({ dataDir, secret: token, request: pwRequest });
@@ -40,26 +40,33 @@ export function createApp({ configPath = process.env.CONFIG_PATH || './sources.j
     if (u.origin !== origin && !(s.allowedOrigins || []).includes(u.origin)) throw new Error('Origin not allowed');
     return u;
   }
-  function headers(s, url, range) {
+  async function headers(s, url, range) {
     // Credentials only go to the source origin unless explicitly configured for another origin.
     const origin = new URL(url).origin;
     const h = { ...(origin === new URL(s.url).origin ? s.headers : s.originHeaders?.[origin]) };
     for (const [k, v] of Object.entries(s.headerEnv || {})) {
       if (origin === new URL(s.url).origin && process.env[v]) h[k] = process.env[v];
     }
-    if (s.auth === 'pw' && origin === new URL(s.url).origin) h.Authorization = pw.authorization(url);
+    if (s.auth === 'pw' && origin === new URL(s.url).origin) h.Authorization = await pw.ensureAuthorization(url);
     if (range) h.Range = range;
     h['Accept-Encoding'] = 'identity';
     return h;
   }
   async function upstream(s, initial, range, signal) {
-    let url = initial;
+    let url = initial, renewed = false;
     for (let redirects = 0; redirects <= 5; redirects++) {
       validate(s, url);
       let response;
       for (let attempt = 0; attempt < 3; attempt++) {
         const timeout = AbortSignal.timeout(30000);
-        response = await fetch(url, { headers: headers(s, url, range), redirect: 'manual', signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+        const requestHeaders = await headers(s, url, range);
+        response = await sourceRequest(url, { headers: requestHeaders, redirect: 'manual', signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+        if (response.status === 401 && s.auth === 'pw' && new URL(url).origin === 'https://api.penpencil.co' && !renewed && pw.state().autoRefresh) {
+          renewed = true; await response.body?.cancel();
+          await pw.refresh({ force: true, rejectedToken: requestHeaders.Authorization });
+          const retryTimeout = AbortSignal.timeout(30000);
+          response = await sourceRequest(url, { headers: await headers(s, url, range), redirect: 'manual', signal: signal ? AbortSignal.any([signal, retryTimeout]) : retryTimeout });
+        }
         if (![429, 502, 503, 504].includes(response.status) || attempt === 2) break;
         await response.body?.cancel();
         await new Promise(r => setTimeout(r, 250 * 2 ** attempt));
@@ -194,9 +201,10 @@ export function createApp({ configPath = process.env.CONFIG_PATH || './sources.j
     const { readdir } = await import('node:fs/promises');
     for (const f of await readdir(dataDir)) if (/^[\w-]+\.[\da-f-]+\.tmp$/.test(f)) await unlink(path.join(dataDir, f));
     await new Promise(resolve => server.listen(port, host, resolve));
+    pw.startRenewal();
     void sync(); timer = setInterval(sync, interval); timer.unref();
     return server.address();
-  }, async stop() { clearInterval(timer); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); } };
+  }, async stop() { clearInterval(timer); const closed = new Promise(resolve => server.close(resolve)); server.closeAllConnections(); await pw.stopRenewal(); await closed; } };
 }
 export async function startServer() {
   const app = createApp();

@@ -77,3 +77,6 @@ footer { border-top: 1px solid #22212d; padding-top: 20px; font-size: 11px; colo
 .token-help li + li { margin-top: 10px; }
 a { color: #c4b5ff; }
 .token-help code { overflow-wrap: anywhere; color: #d4cdeb; }
+
+.replace-session { margin-top: 22px; padding: 8px 0; }
+#renewal-status { margin-bottom: 12px; }

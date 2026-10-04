@@ -11,20 +11,26 @@ export class LoginError extends Error {
 
 // This adapter follows the existing local PW client's request format. It is not
 // a documented public integration. Never retry OTP sends or bypass challenges.
-export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now, log = event => console.info(JSON.stringify(event)) }) {
+export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now, log = event => console.info(JSON.stringify(event)), clientId = process.env.PW_CLIENT_ID || 'system-admin', clientSecret = process.env.PW_CLIENT_SECRET || '' }) {
   const filename = path.join(dataDir, '.pw-session.enc');
   const key = Buffer.from(hkdfSync('sha256', secret, 'pw-relayer', 'pw-session-v1', 32));
   let saved = null, pending = null, busy = false, nextSendAt = 0, nextImportAt = 0, unreadable = false;
+  let renewal = null, renewalTimer = null, stopping = false;
   function state() {
     const expired = saved?.expiresAt !== null && saved?.expiresAt <= now();
     return {
-      connected: Boolean(saved && !expired),
+      connected: Boolean(saved && !expired && !saved.needsLogin),
       expired: Boolean(saved && expired),
       maskedPhone: saved?.maskedPhone || null,
       connectedAt: saved?.connectedAt || null,
       method: saved?.method || 'otp',
       expiresAt: saved?.expiresAt || null,
       unreadable,
+      autoRefresh: Boolean(saved?.refreshToken),
+      refreshStatus: saved?.needsLogin ? 'login_required' : renewal ? 'refreshing' : !saved?.refreshToken ? 'unavailable' : saved.nextRetryAt > now() ? 'retrying' : 'enabled',
+      lastRefreshedAt: saved?.lastRefreshedAt || null,
+      nextRetryAt: saved?.nextRetryAt || null,
+      refreshError: saved?.refreshError || null,
       retryAfter: Math.max(0, Math.ceil((nextSendAt - now()) / 1000))
     };
   }
@@ -35,7 +41,7 @@ export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now,
   }
   async function api(route, payload, device, authorization) {
     const requestId = randomUUID();
-    const operation = route.includes('verify-token') ? 'verify-token' : route.includes('get-otp') ? 'send-otp' : 'verify-otp';
+    const operation = route.includes('refresh-token') ? 'refresh-token' : route.includes('verify-token') ? 'verify-token' : route.includes('get-otp') ? 'send-otp' : 'verify-otp';
     const started = now();
     let response, text, result;
     const record = (event, fields = {}) => log({ event, operation, requestId, elapsedMs: now() - started, ...fields });
@@ -79,6 +85,8 @@ export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now,
       // it may include the phone number, OTP, or credentials.
       const detail = String(result?.error?.message || result?.message || '').toLowerCase();
       if (/captcha|challenge|security error/.test(detail)) throw fail('PW_CHALLENGE', 'PW requires an additional security check. Complete login on its official site; this connector cannot complete that challenge.');
+      if (operation === 'refresh-token' && /invalid_grant|refresh.*(?:expir|revok|invalid)|invalid.*refresh/.test(detail)) throw fail('PW_REFRESH_INVALID', 'PW says the refresh token is no longer valid. Reconnect your account.');
+      if (operation === 'refresh-token') throw fail('PW_REFRESH_REJECTED', `PW rejected session renewal (HTTP ${response.status}). Reconnect if the refresh token expired or was revoked; the server may also require PW client configuration.`);
       if (operation === 'verify-token') throw fail('PW_TOKEN_REJECTED', `PW rejected this session (HTTP ${response.status}). Sign in on PW and copy a fresh Authorization value.`);
       if (operation === 'verify-otp' && /invalid.*otp|incorrect.*otp|otp.*invalid|otp.*incorrect/.test(detail)) throw fail('PW_INVALID_OTP', 'PW rejected the verification code. Check it and try again.', 400);
       if (operation === 'verify-otp' && /expir/.test(detail)) throw fail('PW_EXPIRED_OTP', 'PW reports that the code or login request expired. Request a new OTP.', 400);
@@ -109,8 +117,77 @@ export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now,
       await rename(tmp, filename);
     } finally { await unlink(tmp).catch(() => {}); }
   }
+  function usableToken(value) {
+    return typeof value === 'string' && value.length >= 16 && value.length <= 16000 && /^[A-Za-z0-9._~+\/=-]+$/.test(value);
+  }
+  function renewalTime(expiresAt) {
+    return expiresAt === null ? null : expiresAt - Math.min(120000, Math.max(1000, (expiresAt - now()) / 10));
+  }
+  async function saveFailure(code, terminal) {
+    saved = { ...saved, needsLogin: terminal, refreshError: code, refreshFailures: (saved.refreshFailures || 0) + 1 };
+    saved.nextRetryAt = terminal ? null : now() + Math.min(900000, 60000 * 2 ** Math.min(saved.refreshFailures - 1, 4));
+    try { await persist(saved); } catch { log({ event: 'pw.session.persist_failed' }); }
+  }
+  function refresh({ force = false, rejectedToken } = {}) {
+    if (stopping) return Promise.reject(new LoginError(503, 'The server is restarting. Try again shortly.'));
+    if (renewal) return renewal;
+    if (!saved?.refreshToken || saved.needsLogin) return Promise.reject(new LoginError(409, 'A new PW login or refresh token is required.'));
+    if (rejectedToken && rejectedToken !== `Bearer ${saved.accessToken}`) return Promise.resolve(state());
+    if (saved.nextRetryAt > now()) return Promise.reject(new LoginError(429, 'Renewal will retry after the displayed backoff time.'));
+    if (saved.lastRefreshedAt && now() - saved.lastRefreshedAt < 30000) return force ? Promise.reject(new LoginError(429, 'The session was renewed recently. Wait 30 seconds before testing again.')) : Promise.resolve(state());
+    if (!force && !saved.refreshError && (saved.renewAt === null || (saved.renewAt ?? renewalTime(saved.expiresAt)) > now())) return Promise.resolve(state());
+    if (busy) return Promise.reject(new LoginError(409, 'Another account operation is in progress.'));
+    renewal = exclusive(async () => {
+      try {
+        const data = await api('/v3/oauth/refresh-token', {
+          client_id: clientId, ...(clientSecret ? { client_secret: clientSecret } : {}), refresh_token: saved.refreshToken
+        }, saved.deviceId || randomUUID(), `Bearer ${saved.accessToken}`);
+        if (!usableToken(data?.access_token) || (data.refresh_token !== undefined && !usableToken(data.refresh_token))) throw new LoginError(424, 'PW returned invalid renewal credentials.', { code: 'PW_BAD_REFRESH' });
+        const expiresAt = tokenExpiry(data.access_token, data.expires_in);
+        if (expiresAt !== null && expiresAt <= now()) throw new LoginError(424, 'PW returned an expired access token.', { code: 'PW_BAD_REFRESH' });
+        // Keep the latest rotation in memory even if the disk write fails.
+        saved = { ...saved, accessToken: data.access_token, refreshToken: data.refresh_token ?? saved.refreshToken,
+          expiresAt, renewAt: renewalTime(expiresAt), lastRefreshedAt: now(), needsLogin: false,
+          refreshError: null, refreshFailures: 0, nextRetryAt: null };
+        try { await persist(saved); } catch {
+          saved.needsLogin = true; saved.refreshError = 'STORAGE_ERROR';
+          log({ event: 'pw.session.persist_failed' });
+          throw new LoginError(500, 'Renewed tokens could not be saved. Check server storage before reconnecting.', { code: 'STORAGE_ERROR' });
+        }
+        return state();
+      } catch (error) {
+        if (error.details?.code !== 'STORAGE_ERROR') {
+          const terminal = [400, 401, 403].includes(error.details?.providerStatus) || ['PW_CHALLENGE', 'PW_BAD_REFRESH', 'PW_REFRESH_INVALID'].includes(error.details?.code);
+          await saveFailure(error.details?.code || 'PW_REFRESH_FAILED', terminal);
+        }
+        throw error;
+      }
+    }).finally(() => { renewal = null; });
+    return renewal;
+  }
+  async function maintain() {
+    if (stopping || !saved?.refreshToken || saved.needsLogin || busy || (saved.nextRetryAt || 0) > now()) return;
+    const due = saved.renewAt ?? renewalTime(saved.expiresAt);
+    if ((saved.refreshError && saved.nextRetryAt <= now()) || (due !== null && due <= now())) { try { await refresh(); } catch { /* State and safe logs carry the failure. */ } }
+  }
   return {
     state,
+    refresh,
+    maintain,
+    startRenewal() {
+      stopping = false;
+      if (renewalTimer) return;
+      renewalTimer = setInterval(() => { void maintain(); }, 30000); renewalTimer.unref();
+      void maintain();
+    },
+    async stopRenewal() { stopping = true; clearInterval(renewalTimer); renewalTimer = null; await renewal?.catch(() => {}); },
+    async ensureAuthorization(url) {
+      if (new URL(url).origin !== API) throw new Error('PW credentials can only be sent to the PW API origin');
+      await maintain();
+      if (renewal) await renewal.catch(() => {});
+      if (!state().connected) throw new Error('PW login required');
+      return `Bearer ${saved.accessToken}`;
+    },
     async load() {
       try {
         const envelope = JSON.parse(await readFile(filename, 'utf8'));
@@ -144,29 +221,32 @@ export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now,
         if (pending.attempts >= 5) { pending = null; throw new LoginError(429, 'Too many attempts. Request a new OTP.'); }
         pending.attempts++;
         const data = await api('/v3/oauth/token?smsType=0&fallback=true', {
-          username: pending.phone, otp, client_id: 'system-admin', grant_type: 'password', organizationId: ORGANIZATION
+          username: pending.phone, otp, client_id: clientId, ...(clientSecret ? { client_secret: clientSecret } : {}), grant_type: 'password', organizationId: ORGANIZATION
         }, pending.device);
         if (typeof data?.access_token !== 'string' || !data.access_token || /[\r\n]/.test(data.access_token)) throw new LoginError(424, 'PW returned no usable access token.', { code: 'PW_NO_TOKEN' });
         const expiresAt = tokenExpiry(data.access_token, data.expires_in);
-        const value = { accessToken: data.access_token, expiresAt, connectedAt: now(), method: 'otp', maskedPhone: `+91 ••••••${pending.phone.slice(-4)}` };
+        const value = { accessToken: data.access_token, expiresAt, connectedAt: now(), method: 'otp', refreshToken: usableToken(data.refresh_token) ? data.refresh_token : null, deviceId: pending.device, renewAt: renewalTime(expiresAt), maskedPhone: `+91 ••••••${pending.phone.slice(-4)}` };
         await persist(value);
         saved = value; pending = null; unreadable = false;
         return state();
       });
     },
-    importToken(input) {
+    importToken(input, refreshInput = '', deviceInput = '') {
       return exclusive(async () => {
         if (typeof input !== 'string' || input.length > 16000) throw new LoginError(400, 'Paste the Authorization value from your own PW session.');
         const accessToken = input.trim().replace(/^authorization:\s*/i, '').replace(/^bearer\s+/i, '');
         if (accessToken.length < 16 || !/^[A-Za-z0-9._~+\/=-]+$/.test(accessToken)) throw new LoginError(400, 'Paste a token or Bearer token value, without quotes, line breaks, or other headers.');
+        if (typeof refreshInput !== 'string' || (refreshInput.trim() && !usableToken(refreshInput.trim()))) throw new LoginError(400, 'Enter a valid refresh token without Bearer or other headers.');
+        if (typeof deviceInput !== 'string' || (deviceInput && !/^[a-zA-Z0-9_-]{1,128}$/.test(deviceInput))) throw new LoginError(400, 'Invalid PW device ID.');
+        const refreshToken = refreshInput.trim() || null;
         const expiresAt = tokenExpiry(accessToken);
         if (expiresAt !== null && expiresAt <= now()) throw new LoginError(400, 'This token has expired. Sign in on PW and copy a fresh Authorization value.');
         if (now() < nextImportAt) throw new LoginError(429, 'Wait five seconds before checking another session.');
         nextImportAt = now() + 5000;
-        const device = randomUUID();
+        const device = deviceInput || randomUUID();
         const data = await api('/v3/oauth/verify-token', { randomId: device, organizationId: ORGANIZATION }, device, `Bearer ${accessToken}`);
         if (data?.isVerified !== true) throw new LoginError(424, 'PW did not confirm this session. Nothing was saved. Sign in on PW and try a fresh token.', { code: 'PW_TOKEN_UNVERIFIED' });
-        const value = { accessToken, expiresAt, connectedAt: now(), method: 'token', maskedPhone: null };
+        const value = { accessToken, refreshToken, deviceId: device, expiresAt, renewAt: renewalTime(expiresAt), connectedAt: now(), method: 'token', maskedPhone: null };
         await persist(value);
         saved = value; pending = null; unreadable = false;
         return state();
