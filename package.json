@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test test.mjs auth.test.mjs"
+    "test": "node --test test.mjs auth.test.mjs response.test.mjs"
   },
   "engines": {
     "node": ">=22"

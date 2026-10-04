@@ -1,4 +1,4 @@
-'use strict';
+import { parseApiResponse } from './api-response.js';
 const $ = id => document.getElementById(id);
 let csrf = '', cooldown = 0, working = false;
 function message(text, error = false) { $('message').textContent = text; $('message').classList.toggle('error', error); }
@@ -23,9 +23,8 @@ async function api(route, body) {
     headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
   });
-  const data = await response.json();
-  if (!response.ok) { if (response.status === 401) locked(); throw new Error(data.error || 'Request failed.'); }
-  return data;
+  if (response.status === 401) locked();
+  return parseApiResponse(response, route);
 }
 function tick() {
   const seconds = Math.max(0, Math.ceil((cooldown - Date.now()) / 1000));
@@ -44,7 +43,7 @@ $('unlock-form').addEventListener('submit', event => {
   void action(async () => {
     const key = $('owner-key').value; $('owner-key').value = '';
     const data = await api('login', { key }); csrf = data.csrf;
-    message('Console unlocked.'); account(data.pw);
+    message('Owner access verified.'); account(data.pw);
   });
 });
 $('phone-form').addEventListener('submit', event => {
@@ -67,10 +66,14 @@ $('otp-form').addEventListener('submit', event => {
     message('PW session saved.'); account(data);
   });
 });
-$('lock').addEventListener('click', () => void action(async () => { await api('logout', {}); locked(); message('Console locked. Your saved PW session is retained.'); }));
+$('lock').addEventListener('click', () => void action(async () => { await api('logout', {}); locked(); message('Signed out of owner access. Your saved PW session is retained.'); }));
 $('disconnect').addEventListener('click', () => void action(async () => { const data = await api('pw/disconnect', {}); account(data); message('Saved PW session removed from this relay.'); }));
 setInterval(tick, 1000);
 (async () => {
   try { const data = await api('session'); csrf = data.csrf; message(''); account(data.pw); }
-  catch { locked(); message('Unlock to manage your connection.'); }
+  catch (error) {
+    locked();
+    if (error.status === 401) message('Enter your owner key to connect your PW account.');
+    else message(error.message || 'Could not reach the login service. Reload and try again.', true);
+  }
 })();

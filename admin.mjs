@@ -6,6 +6,7 @@ const assets = new Map([
   ['/admin', ['index.html', 'text/html; charset=utf-8']],
   ['/admin/', ['index.html', 'text/html; charset=utf-8']],
   ['/admin/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/admin/api-response.js', ['api-response.js', 'text/javascript; charset=utf-8']],
   ['/admin/style.css', ['style.css', 'text/css; charset=utf-8']]
 ]);
 function equal(a, b) { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); }
@@ -62,7 +63,7 @@ export function createAdmin({ token, pw, now = Date.now, publicOrigin = process.
       }
       const id = /(?:^|;\s*)pw_owner=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie || '')?.[1];
       const session = sessions.get(id);
-      if (!session) throw new LoginError(401, 'Unlock the owner console first.');
+      if (!session) throw new LoginError(401, 'Verify owner access first.');
       if (url.pathname === '/admin/api/session' && req.method === 'GET') { send(200, { csrf: session.csrf, pw: pw.state() }); return true; }
       if (req.method !== 'POST') throw new LoginError(405, 'Use POST.');
       if (!equal(req.headers['x-csrf-token'] || '', session.csrf)) throw new LoginError(403, 'Session check failed. Reload the page.');

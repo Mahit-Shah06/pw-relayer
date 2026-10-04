@@ -37,7 +37,7 @@ test('owner login, CSRF, OTP, persistence and disconnect over HTTP', async () =>
     await start();
     assert.equal((await fetch(base + '/', { redirect: 'manual' })).headers.get('location'), '/admin/');
     const page = await fetch(base + '/admin/');
-    assert.match(await page.text(), /Unlock your console/);
+    assert.match(await page.text(), /Verify owner access/);
     assert.match(page.headers.get('content-security-policy'), /frame-ancestors 'none'/);
     assert.equal((await post('pw/send-otp', { phone })).status, 401);
     assert.equal(calls.length, 0);
