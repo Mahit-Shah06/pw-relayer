@@ -2,28 +2,21 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PW Relayer · Connect your account</title>
+  <title>PW Relayer</title>
   <link rel="stylesheet" href="/admin/style.css"><script src="/admin/app.js" type="module"></script>
 </head>
 <body>
   <main>
-    <header><a class="brand" href="/admin/">PW<span> / </span>RELAYER</a><span class="tag">PRIVATE LOGIN</span></header>
-    <div class="workspace">
-    <div class="intro"><span class="eyebrow">ACCOUNT CONNECTION</span><h1>Connect your<br>PW account.</h1><p>Sign in once. Keep your session on your own server.</p>
-      <ol class="steps"><li><span>01</span>Verify owner access</li><li><span>02</span>Connect your PW session</li><li><span>03</span>Save your connection</li></ol>
-    </div>
-    <div class="panels">
-    <section class="card" id="unlock-panel" hidden>
-      <div class="step">01 / OWNER ACCESS</div><h2>Verify owner access</h2>
-      <p>Your owner key keeps this connection private. After this step, connect a session from PW or try phone and OTP login.</p>
+    <header><a class="brand" href="/admin/">PW<span> / </span>RELAYER</a></header>
+    <section class="card" id="unlock-panel" aria-label="Verify owner access" hidden>
       <form id="unlock-form">
-        <label for="owner-key">Owner key</label><input id="owner-key" type="password" autocomplete="current-password" required placeholder="Paste your relay owner key">
-        <button type="submit">Continue <span aria-hidden="true">→</span></button>
+        <label for="owner-key">Owner key</label>
+        <input id="owner-key" type="password" autocomplete="current-password" required>
+        <button type="submit">Continue</button>
       </form>
-      <details><summary>Where do I find my key?</summary><p>Run this privately in <code>~/pw-relayer</code> on your VPS:</p><code class="command">node --env-file=.env -p 'process.env.ACCESS_TOKEN'</code><p>Keep the key private. It controls your relay.</p></details>
     </section>
-    <section class="card" id="account-panel" hidden>
-      <div class="card-heading"><span class="step">02 / PW ACCOUNT</span><button id="lock" class="text-button" type="button">Sign out</button></div>
+    <section class="card" id="account-panel" aria-label="PW account" hidden>
+      <div class="card-heading"><span>PW account</span><button id="lock" class="text-button" type="button">Sign out</button></div>
       <button id="browser-open" type="button" class="secondary" hidden>Open PW browser</button>
       <div id="login-panel">
         <div class="method-switch" role="group" aria-label="Connection method">
@@ -31,48 +24,49 @@
           <button id="use-otp" type="button" aria-pressed="false">Phone &amp; OTP</button>
         </div>
         <div id="token-panel">
-          <h2>Use your PW session</h2>
-          <p>Sign in on PW’s official website, then paste the Authorization value from your own session here.</p>
           <form id="token-form">
-            <label for="pw-token">PW Authorization value</label>
-            <input id="pw-token" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="16000" required placeholder="Bearer eyJ… or the token alone">
-            <label for="pw-refresh-token">Refresh token <span class="hint">· enables automatic renewal</span></label>
-            <input id="pw-refresh-token" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="16000" placeholder="Paste refresh_token from the same PW session">
-            <details><summary>Optional device context</summary><label for="pw-device-id">PW randomId</label><input id="pw-device-id" type="text" autocomplete="off" maxlength="128" placeholder="Original session randomId, if available"></details>
+            <label for="pw-token">Authorization token</label>
+            <input id="pw-token" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="16000" required>
+            <label for="pw-refresh-token">Refresh token <span class="hint">(optional)</span></label>
+            <input id="pw-refresh-token" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="16000">
+            <label for="pw-device-id">Device ID <span class="hint">(optional)</span></label>
+            <input id="pw-device-id" type="text" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="128">
             <button type="submit">Verify &amp; save session</button>
           </form>
-          <p class="hint">We verify the session with PW and store it encrypted on your VPS. Keep this value private; it grants access to your account.</p>
-          <details><summary>How do I get my Authorization value?</summary>
-            <ol class="token-help">
-              <li>Open <a href="https://www.pw.live/" target="_blank" rel="noopener noreferrer">PW’s official site</a> and finish login there.</li>
-              <li>Open your browser’s Developer Tools → Network. Reload PW and open a request to <code>api.penpencil.co</code>.</li>
-              <li>Under Request Headers, copy the <code>Authorization</code> value. Choose a request from your logged-in account, not a public asset.</li>
-              <li>Paste that value into the first field. For renewal, also copy <code>refresh_token</code> from the same session’s login response (Network → <code>oauth/token</code> → Response) or PW’s stored <code>TOKEN_CONTEXT</code>. You may need to sign in on PW once with Network open to capture it.</li>
-              <li>If available, copy the same session’s <code>randomId</code> into Optional device context. Keep all these values private.</li>
-            </ol>
-          </details>
-          <p class="hint">Access-only login expires. With a refresh token, the relay can attempt renewal; PW can still revoke or reject the session.</p>
         </div>
         <div id="otp-panel" hidden>
-        <h2>Secure OTP login</h2>
-        <div id="otp-unavailable" class="note">PW retired its old OTP API. Direct login needs PW’s CAPTCHA to accept this domain. <a href="https://www.pw.live/" target="_blank" rel="noopener noreferrer">Sign in on PW</a>, then use Existing session here.</div>
-        <form id="phone-form"><label for="phone">Mobile number</label><div class="phone-field"><span>+91</span><input id="phone" type="tel" inputmode="numeric" autocomplete="tel-national" pattern="[6-9][0-9]{9}" required placeholder="10-digit mobile number"></div><div id="pw-captcha" class="captcha"></div><button id="send-otp" type="submit">Send OTP <span aria-hidden="true">→</span></button></form>
-        <form id="otp-form" hidden><label for="otp">Verification code</label><p class="hint" id="otp-destination"></p><input id="otp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{4,8}" minlength="4" maxlength="8" required placeholder="Enter your OTP"><button type="submit">Verify & connect</button><p class="hint">Codes expire. You can request another after the countdown.</p></form>
-        <p class="hint">PW may reject server-side OTP requests or require a CAPTCHA. If that happens, sign in on PW and use Existing session.</p>
+          <p id="otp-unavailable" class="note">Unavailable. Use Open PW browser or Existing session.</p>
+          <form id="phone-form">
+            <label for="phone">Mobile number</label>
+            <div class="phone-field"><span>+91</span><input id="phone" type="tel" inputmode="numeric" autocomplete="tel-national" pattern="[6-9][0-9]{9}" required></div>
+            <div id="pw-captcha" class="captcha"></div>
+            <button id="send-otp" type="submit">Send OTP</button>
+          </form>
+          <form id="otp-form" hidden>
+            <label for="otp">OTP</label><p class="hint" id="otp-destination"></p>
+            <input id="otp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{4,8}" minlength="4" maxlength="8" required>
+            <button type="submit">Verify &amp; connect</button>
+          </form>
         </div>
       </div>
-      <div id="connected-panel" hidden><span class="badge">CONNECTED</span><h2>Your session is saved.</h2><p id="account-detail"></p><p id="session-expiry" class="hint"></p><div id="renewal-status" class="note" role="status"></div><button id="renew-now" type="button" class="secondary" hidden>Test renewal now</button><button id="replace-session" type="button" class="text-button replace-session">Update saved session</button><p>The PW token is encrypted on your VPS and survives restarts.</p><div class="note">Login is ready. Browsing batches and importing lectures or PDFs is the next integration step.</div><button id="disconnect" type="button" class="secondary">Remove saved PW session</button><p class="hint">This removes this relay’s copy. It does not sign you out of PW elsewhere.</p></div>
+      <div id="connected-panel" hidden>
+        <dl class="session-status">
+          <dt>Account</dt><dd id="account-detail"></dd>
+          <dt>Expires</dt><dd id="session-expiry"></dd>
+          <dt>Renewal</dt><dd id="renewal-status" role="status"></dd>
+        </dl>
+        <button id="renew-now" type="button" class="secondary" hidden>Test renewal now</button>
+        <button id="replace-session" type="button" class="secondary">Update saved session</button>
+        <button id="disconnect" type="button" class="text-button remove-session">Remove saved PW session</button>
+      </div>
     </section>
-    <p id="message" role="status" aria-live="polite">Loading login…</p>
-    </div>
-    </div>
-    <footer>Personal relay · Not an official Physics Wallah website.<br>Your OTP is used for verification and is never saved.</footer>
+    <p id="message" role="status" aria-live="polite"></p>
     <section id="browser-room" class="browser-room" aria-label="Remote PW browser" hidden>
       <div class="browser-toolbar"><strong>PW browser · www.pw.live</strong><button id="browser-close" type="button" class="secondary">Close browser</button></div>
-      <p id="browser-state" role="status">Opening PW…</p>
-      <p class="hint">This is a browser on your VPS. Click a field below, then type or use the text box. The session closes after 10 minutes. Only you complete OTP and CAPTCHA.</p>
-      <div class="browser-viewport"><canvas id="browser-screen" width="1000" height="760" tabindex="0" aria-label="Interactive remote PW page. Click to focus, then type."></canvas></div>
-      <form id="browser-type" class="browser-input"><input id="browser-text" type="password" autocomplete="off" maxlength="256" placeholder="Text for the selected PW field" aria-label="Text to type into PW"><button type="submit">Type into PW</button><button id="browser-enter" type="button" class="secondary">Enter ↵</button></form>
+      <p id="browser-state" role="status">Opening…</p>
+      <div class="browser-viewport"><canvas id="browser-screen" width="1000" height="760" tabindex="0" aria-label="Interactive PW page. Click a field, then type."></canvas></div>
+      <label for="browser-text">Text for selected PW field</label>
+      <form id="browser-type" class="browser-input"><input id="browser-text" type="password" autocomplete="off" maxlength="256"><button type="submit">Type into PW</button><button id="browser-enter" type="button" class="secondary">Enter ↵</button></form>
       <button id="browser-save" type="button" disabled>Save session &amp; close</button>
     </section>
   </main>

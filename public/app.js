@@ -25,15 +25,15 @@ function account(pw) {
   if (pw.connected) {
     $('otp-form').hidden = true; $('otp').value = ''; $('phone').value = '';
     $('pw-token').value = ''; $('pw-refresh-token').value = ''; $('pw-device-id').value = '';
-    $('account-detail').textContent = `${pw.maskedPhone || 'Imported PW session'} · Connected ${new Date(pw.connectedAt).toLocaleString()}`;
-    $('session-expiry').textContent = pw.expiresAt ? `Token expiry: ${new Date(pw.expiresAt).toLocaleString()}` : 'Expiry is unknown. Reconnect if PW stops accepting this session.';
+    $('account-detail').textContent = pw.maskedPhone || 'PW account';
+    $('session-expiry').textContent = pw.expiresAt ? new Date(pw.expiresAt).toLocaleString() : 'Unknown';
   }
-  const renewal = pw.refreshStatus === 'login_required' ? 'Login required: PW rejected renewal. Reconnect with a fresh session.' : !pw.autoRefresh ? 'Automatic renewal is off. Add a refresh token using Update saved session.' : pw.refreshStatus === 'retrying' ? `Renewal failed temporarily. Next retry: ${new Date(pw.nextRetryAt).toLocaleString()}.` : pw.lastRefreshedAt ? `Automatic renewal is on. Last renewed: ${new Date(pw.lastRefreshedAt).toLocaleString()}.` : 'Automatic renewal is configured. The first renewal has not been verified yet.';
+  const renewal = pw.refreshStatus === 'login_required' ? 'Login required' : !pw.autoRefresh ? 'Off' : pw.refreshStatus === 'retrying' ? `Retry: ${new Date(pw.nextRetryAt).toLocaleString()}` : pw.lastRefreshedAt ? `Last renewed: ${new Date(pw.lastRefreshedAt).toLocaleString()}` : 'Not yet verified';
   $('renewal-status').textContent = renewal;
   $('renew-now').hidden = !pw.autoRefresh;
   if (pw.refreshStatus === 'login_required') message(renewal, true);
-  else if (pw.expired) message('Your saved PW token has expired. Import a fresh session or connect again with OTP.', true);
-  if (pw.unreadable) message('The previous saved session could not be opened. Please connect again.', true);
+  else if (pw.expired) message('Session expired. Sign in again.', true);
+  if (pw.unreadable) message('Saved session unreadable. Sign in again.', true);
 }
 async function api(route, body) {
   const response = await fetch(`/admin/api/${route}`, {
@@ -61,7 +61,7 @@ $('unlock-form').addEventListener('submit', event => {
   void action(async () => {
     const key = $('owner-key').value; $('owner-key').value = '';
     const data = await api('login', { key }); csrf = data.csrf; remoteBrowser.configure(data.browser);
-    message('Owner access verified.'); account(data.pw);
+    message(''); account(data.pw);
   });
 });
 function method(name) {
@@ -82,7 +82,7 @@ $('token-form').addEventListener('submit', event => {
     const deviceId = $('pw-device-id').value.trim();
     const token = $('pw-token').value; $('pw-token').value = ''; $('pw-refresh-token').value = ''; $('pw-device-id').value = '';
     const data = await api('pw/import-token', { token, refreshToken, deviceId });
-    message('PW verified your session. Saved on this server.'); account(data);
+    message('Session saved.'); account(data);
   });
 });
 async function mountCaptcha() {
@@ -137,7 +137,7 @@ $('phone-form').addEventListener('submit', event => {
     let data;
     try { data = await api('pw/send-otp', { phone, captchaToken }); } finally { resetCaptcha(); }
     $('otp-destination').textContent = `Sent to ${data.maskedPhone}`;
-    $('otp-form').hidden = false; $('otp').focus(); message('OTP requested. Check your phone.');
+    $('otp-form').hidden = false; $('otp').focus(); message('OTP sent.');
   });
 });
 $('otp-form').addEventListener('submit', event => {
@@ -150,7 +150,7 @@ $('otp-form').addEventListener('submit', event => {
 });
 $('replace-session').addEventListener('click', () => {
   editingSession = true; $('connected-panel').hidden = true; $('login-panel').hidden = false; method('token');
-  message('Your current saved session stays in place until the replacement is verified.');
+  message('');
 });
 $('renew-now').addEventListener('click', () => void action(async () => {
   try { const data = await api('pw/refresh', {}); account(data); message('Renewal completed.'); }
@@ -163,14 +163,14 @@ setInterval(async () => {
   if (!csrf || working || editingSession || document.hidden || $('connected-panel').hidden) return;
   try { const data = await api('session'); account(data.pw); } catch { /* Existing UI and normal requests report failures. */ }
 }, 30000);
-$('lock').addEventListener('click', () => void action(async () => { await api('logout', {}); locked(); message('Signed out of owner access. Your saved PW session is retained.'); }));
-$('disconnect').addEventListener('click', () => void action(async () => { const data = await api('pw/disconnect', {}); account(data); message('Saved PW session removed from this relay.'); }));
+$('lock').addEventListener('click', () => void action(async () => { await api('logout', {}); locked(); message(''); }));
+$('disconnect').addEventListener('click', () => void action(async () => { const data = await api('pw/disconnect', {}); account(data); message('Session removed.'); }));
 setInterval(tick, 1000);
 (async () => {
   try { const data = await api('session'); csrf = data.csrf; remoteBrowser.configure(data.browser); message(''); account(data.pw); }
   catch (error) {
     locked();
-    if (error.status === 401) message('Enter your owner key to connect your PW account.');
+    if (error.status === 401) message('');
     else message(error.message || 'Could not reach the login service. Reload and try again.', true);
   }
 })();

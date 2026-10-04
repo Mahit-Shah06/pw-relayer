@@ -8,16 +8,16 @@ export function setupBrowser({ api, action, account, message }) {
     try {
       const state = await api('pw/browser/status');
       if (gen !== generation) return;
-      if (!state.active) { hide(); message('PW browser closed or expired. Open a new session if needed.'); return; }
+      if (!state.active) { hide(); message('Browser closed or expired.'); return; }
       $('browser-save').disabled = !state.ready || busy;
-      $('browser-state').textContent = state.ready ? 'PW returned a session. Click Save session to verify and store it.' : 'Sign in on the PW page below. Complete any CAPTCHA yourself.';
+      $('browser-state').textContent = state.ready ? 'Session ready to save.' : 'Awaiting PW login.';
       const img = new Image();
       await new Promise((resolve, reject) => {
         img.onload = resolve; img.onerror = reject;
         img.src = `/admin/api/pw/browser/frame?t=${Date.now()}`;
       });
       if (gen === generation) ctx.drawImage(img, 0, 0);
-    } catch { if (active) $('browser-state').textContent = 'Waiting for the browser… If it does not recover, close and reopen it.'; }
+    } catch { if (active) $('browser-state').textContent = 'Waiting for browser…'; }
     finally { if (active && gen === generation) timer = setTimeout(poll, 800); }
   }
   function show() { active = true; generation++; $('browser-room').hidden = false; canvas.focus(); void poll(); }
@@ -44,7 +44,7 @@ export function setupBrowser({ api, action, account, message }) {
   });
   $('browser-close').addEventListener('click', () => void run(async () => { await api('pw/browser/close', {}); hide(); message('PW browser closed.'); }));
   $('browser-save').addEventListener('click', () => void run(async () => {
-    const state = await api('pw/browser/save', {}); hide(); account(state); message('PW session verified and saved.');
+    const state = await api('pw/browser/save', {}); hide(); account(state); message('Session saved.');
   }));
   canvas.addEventListener('click', event => {
     canvas.focus();
