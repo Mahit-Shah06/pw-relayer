@@ -16,7 +16,7 @@ async function json(req) {
   const chunks = []; let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > 4096) throw new LoginError(413, 'Request too large.');
+    if (size > 20 * 1024) throw new LoginError(413, 'Request too large.');
     chunks.push(chunk);
   }
   try {
@@ -75,6 +75,7 @@ export function createAdmin({ token, pw, now = Date.now, publicOrigin = process.
           res.setHeader('Set-Cookie', cookie('', 0)); send(200, { ok: true }); break;
         case '/admin/api/pw/send-otp': send(200, await pw.sendOtp(id, body.phone)); break;
         case '/admin/api/pw/verify-otp': send(200, await pw.verifyOtp(id, body.otp)); break;
+        case '/admin/api/pw/import-token': send(200, await pw.importToken(body.token)); break;
         case '/admin/api/pw/disconnect': send(200, await pw.disconnect()); break;
         default: throw new LoginError(404, 'Not found.');
       }

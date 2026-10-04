@@ -5,7 +5,7 @@ let csrf = '', cooldown = 0, working = false;
 function message(text, error = false) { $('message').textContent = text; $('message').classList.toggle('error', error); }
 function locked() {
   csrf = ''; $('unlock-panel').hidden = false; $('account-panel').hidden = true;
-  $('otp-form').hidden = true; $('phone').value = ''; $('otp').value = '';
+  $('otp-form').hidden = true; $('phone').value = ''; $('otp').value = ''; $('pw-token').value = '';
 }
 function account(pw) {
   $('unlock-panel').hidden = true; $('account-panel').hidden = false;
@@ -13,9 +13,11 @@ function account(pw) {
   cooldown = Math.max(cooldown, Date.now() + (pw.retryAfter || 0) * 1000);
   if (pw.connected) {
     $('otp-form').hidden = true; $('otp').value = ''; $('phone').value = '';
-    $('account-detail').textContent = `${pw.maskedPhone} · Connected ${new Date(pw.connectedAt).toLocaleString()}`;
+    $('pw-token').value = '';
+    $('account-detail').textContent = `${pw.maskedPhone || 'Imported PW session'} · Connected ${new Date(pw.connectedAt).toLocaleString()}`;
+    $('session-expiry').textContent = pw.expiresAt ? `Token expiry: ${new Date(pw.expiresAt).toLocaleString()}` : 'Expiry is unknown. Reconnect if PW stops accepting this session.';
   }
-  if (pw.expired) message('Your saved PW token has expired. Connect again with a new OTP.', true);
+  if (pw.expired) message('Your saved PW token has expired. Import a fresh session or connect again with OTP.', true);
   if (pw.unreadable) message('The previous saved session could not be opened. Please connect again.', true);
 }
 async function api(route, body) {
@@ -45,6 +47,24 @@ $('unlock-form').addEventListener('submit', event => {
     const key = $('owner-key').value; $('owner-key').value = '';
     const data = await api('login', { key }); csrf = data.csrf;
     message('Owner access verified.'); account(data.pw);
+  });
+});
+function method(name) {
+  $('token-panel').hidden = name !== 'token';
+  $('otp-panel').hidden = name !== 'otp';
+  $('use-token').setAttribute('aria-pressed', String(name === 'token'));
+  $('use-otp').setAttribute('aria-pressed', String(name === 'otp'));
+  $('pw-token').value = ''; $('otp').value = '';
+  message('');
+}
+$('use-token').addEventListener('click', () => method('token'));
+$('use-otp').addEventListener('click', () => method('otp'));
+$('token-form').addEventListener('submit', event => {
+  event.preventDefault();
+  void action(async () => {
+    const token = $('pw-token').value; $('pw-token').value = '';
+    const data = await api('pw/import-token', { token });
+    message('PW verified your session. Saved on this server.'); account(data);
   });
 });
 $('phone').addEventListener('input', () => {

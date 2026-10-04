@@ -10,12 +10,12 @@
     <header><a class="brand" href="/admin/">PW<span> / </span>RELAYER</a><span class="tag">PRIVATE LOGIN</span></header>
     <div class="workspace">
     <div class="intro"><span class="eyebrow">ACCOUNT CONNECTION</span><h1>Connect your<br>PW account.</h1><p>Sign in once. Keep your session on your own server.</p>
-      <ol class="steps"><li><span>01</span>Verify owner access</li><li><span>02</span>Sign in with your PW OTP</li><li><span>03</span>Save your connection</li></ol>
+      <ol class="steps"><li><span>01</span>Verify owner access</li><li><span>02</span>Connect your PW session</li><li><span>03</span>Save your connection</li></ol>
     </div>
     <div class="panels">
     <section class="card" id="unlock-panel" hidden>
       <div class="step">01 / OWNER ACCESS</div><h2>Verify owner access</h2>
-      <p>Your owner key keeps this connection private. After this step, sign in to PW with your phone number and OTP.</p>
+      <p>Your owner key keeps this connection private. After this step, connect a session from PW or try phone and OTP login.</p>
       <form id="unlock-form">
         <label for="owner-key">Owner key</label><input id="owner-key" type="password" autocomplete="current-password" required placeholder="Paste your relay owner key">
         <button type="submit">Continue <span aria-hidden="true">→</span></button>
@@ -25,12 +25,37 @@
     <section class="card" id="account-panel" hidden>
       <div class="card-heading"><span class="step">02 / PW ACCOUNT</span><button id="lock" class="text-button" type="button">Sign out</button></div>
       <div id="login-panel">
+        <div class="method-switch" role="group" aria-label="Connection method">
+          <button id="use-token" type="button" aria-pressed="true">Existing session</button>
+          <button id="use-otp" type="button" aria-pressed="false">Phone &amp; OTP</button>
+        </div>
+        <div id="token-panel">
+          <h2>Use your PW session</h2>
+          <p>Sign in on PW’s official website, then paste the Authorization value from your own session here.</p>
+          <form id="token-form">
+            <label for="pw-token">PW Authorization value</label>
+            <input id="pw-token" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="16000" required placeholder="Bearer eyJ… or the token alone">
+            <button type="submit">Verify &amp; save session</button>
+          </form>
+          <p class="hint">We verify the session with PW and store it encrypted on your VPS. Keep this value private; it grants access to your account.</p>
+          <details><summary>How do I get my Authorization value?</summary>
+            <ol class="token-help">
+              <li>Open <a href="https://www.pw.live/" target="_blank" rel="noopener noreferrer">PW’s official site</a> and finish login there.</li>
+              <li>Open your browser’s Developer Tools → Network. Reload PW and open a request to <code>api.penpencil.co</code>.</li>
+              <li>Under Request Headers, copy the <code>Authorization</code> value. Choose a request from your logged-in account, not a public asset.</li>
+              <li>Paste only that value above. Do not copy all headers or share the token in chat.</li>
+            </ol>
+          </details>
+          <p class="hint">A token may expire or be tied to a device. If PW rejects it, nothing is saved.</p>
+        </div>
+        <div id="otp-panel" hidden>
         <h2>Connect with an OTP</h2><p>Enter the mobile number you use for PW. We’ll submit your login request to PW from this server.</p>
         <form id="phone-form"><label for="phone">Mobile number</label><div class="phone-field"><span>+91</span><input id="phone" type="tel" inputmode="numeric" autocomplete="tel-national" pattern="[6-9][0-9]{9}" required placeholder="10-digit mobile number"></div><button id="send-otp" type="submit">Send OTP <span aria-hidden="true">→</span></button></form>
         <form id="otp-form" hidden><label for="otp">Verification code</label><p class="hint" id="otp-destination"></p><input id="otp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{4,8}" minlength="4" maxlength="8" required placeholder="Enter your OTP"><button type="submit">Verify & connect</button><p class="hint">Codes expire. You can request another after the countdown.</p></form>
-        <p class="hint">If PW requires a CAPTCHA or rejects the connection, use its official site. This connector does not bypass those checks.</p>
+        <p class="hint">PW may reject server-side OTP requests or require a CAPTCHA. If that happens, sign in on PW and use Existing session.</p>
+        </div>
       </div>
-      <div id="connected-panel" hidden><span class="badge">CONNECTED</span><h2>Your session is saved.</h2><p id="account-detail"></p><p>The PW token is encrypted on your VPS and survives restarts.</p><div class="note">Login is ready. Browsing batches and importing lectures or PDFs is the next integration step.</div><button id="disconnect" type="button" class="secondary">Remove saved PW session</button><p class="hint">This removes this relay’s copy. It does not sign you out of PW elsewhere.</p></div>
+      <div id="connected-panel" hidden><span class="badge">CONNECTED</span><h2>Your session is saved.</h2><p id="account-detail"></p><p id="session-expiry" class="hint"></p><p>The PW token is encrypted on your VPS and survives restarts.</p><div class="note">Login is ready. Browsing batches and importing lectures or PDFs is the next integration step.</div><button id="disconnect" type="button" class="secondary">Remove saved PW session</button><p class="hint">This removes this relay’s copy. It does not sign you out of PW elsewhere.</p></div>
     </section>
     <p id="message" role="status" aria-live="polite">Loading login…</p>
     </div>

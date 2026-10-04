@@ -1,6 +1,6 @@
 # pw-relayer
 
-A dependency-free Node.js 22 HTTP connector, HLS relay, and local file store. Configure direct media, document, or data URLs. Includes an owner-only PW OTP login page. The PW adapter follows the request format in the existing local PW client; it is not a documented public integration and has not been validated with a real PW account. Course discovery, token renewal, DRM handling, and a viewer/player are not implemented.
+A dependency-free Node.js 22 HTTP connector, HLS relay, and local file store. Configure direct media, document, or data URLs. Includes an owner-only PW login page with OTP and existing-session import. The PW adapter follows the request format in the existing local PW client; it is not a documented public integration and has not been validated with a real PW account. Course discovery, token renewal, DRM handling, and a viewer/player are not implemented.
 
 ## Start on a VPS
 
@@ -110,7 +110,7 @@ Open `https://pw.itzzsuperrr.me/` (or your configured HTTPS domain). Unlock the 
 node --env-file=.env -p 'process.env.ACCESS_TOKEN'
 ```
 
-Do not paste the key into chat, public JavaScript, or your Git repository. The page clears the owner-key field after submission and keeps no key in browser storage. Once unlocked, enter your PW mobile number (India, +91), request an OTP, and enter the code. Spaces in pasted numbers, including non-breaking spaces, are removed automatically; extra digits and letters are not silently discarded. Do not send your OTP to anyone else.
+Do not paste the key into chat, public JavaScript, or your Git repository. The page clears the owner-key field after submission and keeps no key in browser storage. Select **Phone & OTP** after unlocking, then enter your PW mobile number (India, +91), request an OTP, and enter the code. Spaces in pasted numbers, including non-breaking spaces, are removed automatically; extra digits and letters are not silently discarded. Do not send your OTP to anyone else.
 
 The owner session uses an HttpOnly, Secure, SameSite=Strict cookie, lasts eight hours, and is cleared by server restarts. POST routes require a matching Origin and CSRF token. An optional `PUBLIC_ORIGIN=https://pw.itzzsuperrr.me` in `.env` pins the accepted browser origin; otherwise the app uses the host and HTTPS scheme set by your trusted Nginx proxy. Keep the service bound to localhost when using PM2. HTTPS is required for the owner cookie (browsers allow localhost for local development).
 
@@ -147,3 +147,19 @@ pm2 logs pw-relayer --lines 40 --nostream
 Provider dependency failures now return structured JSON with HTTP 424 instead of being presented as generic gateway 502 failures. They are still failures. This distinguishes them from an actual Nginx/Cloudflare 502. If the browser still receives HTML and no matching request appears in PM2 logs, inspect the proxy path. If Nginx has inherited error-page interception enabled, set `proxy_intercept_errors off;` inside this site's proxy location, then validate/reload Nginx. Do not replace the Certbot-managed TLS configuration.
 
 The public PW login bundle inspected on 2026-10-04 includes optional CAPTCHA-backed OTP endpoints and CAPTCHA token/site-key fields. The current adapter does not implement that browser challenge flow. A provider HTTP 403 confirms rejection but does not identify whether a challenge, request requirement, or server access restriction caused it; changing endpoint names alone is not a verified fix.
+
+
+## Import an existing PW session
+
+If OTP login is rejected, use **Existing session** after unlocking your private login page.
+
+1. Sign in to your own account on `https://www.pw.live/` and complete any OTP/CAPTCHA there.
+2. Open your browser's Developer Tools → Network, reload PW, and select an authenticated request to `api.penpencil.co`.
+3. In **Request Headers**, copy the **Authorization** value. Copy only the value, not all request headers or a full cURL command.
+4. Paste it into **PW Authorization value** on your relay and click **Verify & save session**.
+
+The form accepts a raw token, `Bearer <token>`, or `Authorization: Bearer <token>`. It sends the credential only to this relay; the relay verifies it against the fixed PW token-verification endpoint. Redirects are refused. It requires `success: true` and `data.isVerified: true` before replacing the saved session. Invalid, expired, rejected, or unconfirmed tokens are not saved; the previous saved session remains intact. Verification is limited to one attempt per five seconds. Your token is cleared from the form after submission, is not saved in localStorage, is not logged or echoed, and is encrypted in the existing session file.
+
+Treat the copied value like a password. Paste it only into your own HTTPS relay, never into chat or a GitHub issue. It may expire, be revoked, or be bound to PW's original device/session context. Import cannot guarantee PW will accept the token from your VPS, and does not automatically renew it. Expiry is shown when the token contains an expiry claim; otherwise it is unknown.
+
+The existing-session flow uses `POST /admin/api/pw/import-token`, guarded by owner authentication, CSRF checks, and the same-origin policy. Its upstream verification request follows the public PW SDK format: `POST /v3/oauth/verify-token` with organization and random-device context. The current public SDK also supplies `client-type: WEB` and an organization `client-id` header; these headers are now included in all PW authentication requests. This fixes a request-format difference but has not been verified to resolve the live OTP 403. No real SMS was sent during these changes.

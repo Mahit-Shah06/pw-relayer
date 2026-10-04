@@ -15,6 +15,8 @@ test('owner login, CSRF, OTP, persistence and disconnect over HTTP', async () =>
   const dir = await mkdtemp(path.join(os.tmpdir(), 'pw-auth-http-'));
   const calls = [];
   const mock = async (url, options) => {
+    assert.equal(options.headers['client-type'], 'WEB');
+    assert.equal(options.headers['client-id'], '5eb393ee95fab7468a79d189');
     calls.push({ url, body: JSON.parse(options.body) });
     if (JSON.parse(options.body).otp === '000000') return new Response('<!DOCTYPE html>private-provider-page', { status: 502 });
     return url.includes('get-otp') ? success({}) : success({ access_token: providerToken, expires_in: 3600 });
@@ -155,4 +157,74 @@ test('phone normalization removes formatting spaces without truncating or accept
   assert.equal(normalizePhone('98765432101'), '98765432101');
   assert.equal(normalizePhone('98765a43210'), '98765a43210');
   assert.equal(normalizePhone(null), null);
+});
+
+test('imported tokens are remotely verified, encrypted, and never replace a good session after rejection', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'pw-token-import-'));
+  const events = [], calls = [];
+  let time = Date.now(), reject = false, unverified = false;
+  const request = async (url, options) => {
+    calls.push({ url, options });
+    return reject ? new Response(JSON.stringify({ success: false, message: 'private-token-debug' }), { status: 401 }) : success({ isVerified: !unverified });
+  };
+  const auth = createPwAuth({ dataDir: dir, secret, request, now: () => time, log: event => events.push(event) });
+  try {
+    for (const prefix of ['', 'Bearer ', 'Authorization: Bearer ']) {
+      time += 6000;
+      const state = await auth.importToken(prefix + providerToken);
+      assert.equal(state.connected, true); assert.equal(state.method, 'token');
+      assert.ok(!JSON.stringify(state).includes(providerToken));
+      assert.equal(calls.at(-1).url, 'https://api.penpencil.co/v3/oauth/verify-token');
+      assert.equal(calls.at(-1).options.headers.Authorization, `Bearer ${providerToken}`);
+      assert.equal(calls.at(-1).options.redirect, 'error');
+      assert.ok(!calls.at(-1).options.body.includes(providerToken));
+    }
+    const before = await readFile(path.join(dir, '.pw-session.enc'), 'utf8');
+    assert.ok(!before.includes(providerToken));
+    const reloaded = createPwAuth({ dataDir: dir, secret, request });
+    await reloaded.load();
+    assert.equal(reloaded.authorization('https://api.penpencil.co/test'), `Bearer ${providerToken}`);
+    time += 6000; reject = true;
+    await assert.rejects(auth.importToken('another-token-value-for-testing'), error => error.details.code === 'PW_TOKEN_REJECTED');
+    assert.equal(await readFile(path.join(dir, '.pw-session.enc'), 'utf8'), before);
+    assert.equal(auth.authorization('https://api.penpencil.co/test'), `Bearer ${providerToken}`);
+    time += 6000; reject = false; unverified = true;
+    await assert.rejects(auth.importToken('another-token-value-for-testing'), error => error.details.code === 'PW_TOKEN_UNVERIFIED');
+    assert.equal(await readFile(path.join(dir, '.pw-session.enc'), 'utf8'), before);
+    const count = calls.length;
+    await assert.rejects(auth.importToken('Bearer abc\r\nInjected: header'), { status: 400 });
+    const expired = `header.${Buffer.from(JSON.stringify({ exp: Math.floor(time / 1000) - 1 })).toString('base64url')}.signature`;
+    await assert.rejects(auth.importToken(expired), /expired/);
+    assert.equal(calls.length, count);
+    const logs = JSON.stringify(events);
+    for (const value of [providerToken, 'another-token-value-for-testing', 'private-token-debug', secret]) assert.ok(!logs.includes(value));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('token-import HTTP route requires owner access and CSRF, and never echoes the token', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'pw-token-http-'));
+  const configPath = path.join(dir, 'sources.json');
+  await writeFile(configPath, '{"sources":[]}');
+  let calls = 0;
+  const app = createApp({ configPath, dataDir: dir, token: secret, pwRequest: async () => { calls++; return success({ isVerified: true }); } });
+  try {
+    const address = await app.start(0, '127.0.0.1');
+    const base = `http://127.0.0.1:${address.port}`;
+    let cookie = '', csrf = '';
+    const post = (route, body) => fetch(base + '/admin/api/' + route, { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json', Cookie: cookie, 'X-CSRF-Token': csrf }, body: JSON.stringify(body) });
+    assert.equal((await post('pw/import-token', { token: providerToken })).status, 401);
+    const login = await post('login', { key: secret });
+    cookie = login.headers.get('set-cookie').split(';')[0];
+    assert.equal((await post('pw/import-token', { token: providerToken })).status, 403);
+    assert.equal(calls, 0);
+    csrf = (await login.json()).csrf;
+    const response = await post('pw/import-token', { token: `Bearer ${providerToken}` });
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    assert.equal(JSON.parse(text).connected, true);
+    assert.ok(!text.includes(providerToken));
+    assert.equal(calls, 1);
+    assert.equal((await post('pw/import-token', { token: providerToken })).status, 429);
+    assert.equal(calls, 1);
+  } finally { await app.stop(); await rm(dir, { recursive: true, force: true }); }
 });

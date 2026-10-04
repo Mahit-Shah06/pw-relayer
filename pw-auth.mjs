@@ -14,7 +14,7 @@ export class LoginError extends Error {
 export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now, log = event => console.info(JSON.stringify(event)) }) {
   const filename = path.join(dataDir, '.pw-session.enc');
   const key = Buffer.from(hkdfSync('sha256', secret, 'pw-relayer', 'pw-session-v1', 32));
-  let saved = null, pending = null, busy = false, nextSendAt = 0, unreadable = false;
+  let saved = null, pending = null, busy = false, nextSendAt = 0, nextImportAt = 0, unreadable = false;
   function state() {
     const expired = saved?.expiresAt !== null && saved?.expiresAt <= now();
     return {
@@ -22,6 +22,7 @@ export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now,
       expired: Boolean(saved && expired),
       maskedPhone: saved?.maskedPhone || null,
       connectedAt: saved?.connectedAt || null,
+      method: saved?.method || 'otp',
       expiresAt: saved?.expiresAt || null,
       unreadable,
       retryAfter: Math.max(0, Math.ceil((nextSendAt - now()) / 1000))
@@ -32,9 +33,9 @@ export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now,
     busy = true;
     try { return await fn(); } finally { busy = false; }
   }
-  async function api(route, payload, device) {
+  async function api(route, payload, device, authorization) {
     const requestId = randomUUID();
-    const operation = route.includes('get-otp') ? 'send-otp' : 'verify-otp';
+    const operation = route.includes('verify-token') ? 'verify-token' : route.includes('get-otp') ? 'send-otp' : 'verify-otp';
     const started = now();
     let response, text, result;
     const record = (event, fields = {}) => log({ event, operation, requestId, elapsedMs: now() - started, ...fields });
@@ -47,7 +48,7 @@ export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now,
     try {
       response = await request(API + route, {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15000),
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json', Origin: 'https://www.pw.live', Referer: 'https://www.pw.live/', Randomid: device },
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', Origin: 'https://www.pw.live', Referer: 'https://www.pw.live/', Randomid: device, 'client-type': 'WEB', 'client-id': ORGANIZATION, ...(authorization ? { Authorization: authorization, organizationid: ORGANIZATION } : {}) },
         body: JSON.stringify(payload)
       });
       const chunks = []; let size = 0;
@@ -78,12 +79,24 @@ export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now,
       // it may include the phone number, OTP, or credentials.
       const detail = String(result?.error?.message || result?.message || '').toLowerCase();
       if (/captcha|challenge|security error/.test(detail)) throw fail('PW_CHALLENGE', 'PW requires an additional security check. Complete login on its official site; this connector cannot complete that challenge.');
+      if (operation === 'verify-token') throw fail('PW_TOKEN_REJECTED', `PW rejected this session (HTTP ${response.status}). Sign in on PW and copy a fresh Authorization value.`);
       if (operation === 'verify-otp' && /invalid.*otp|incorrect.*otp|otp.*invalid|otp.*incorrect/.test(detail)) throw fail('PW_INVALID_OTP', 'PW rejected the verification code. Check it and try again.', 400);
       if (operation === 'verify-otp' && /expir/.test(detail)) throw fail('PW_EXPIRED_OTP', 'PW reports that the code or login request expired. Request a new OTP.', 400);
       throw fail('PW_REJECTED', `PW rejected the ${operation === 'send-otp' ? 'OTP request' : 'verification'} (HTTP ${response.status}). Its login requirements may have changed.`);
     }
     record('pw.request.succeeded', { providerStatus: response.status });
     return result.data;
+  }
+  function tokenExpiry(accessToken, expiresIn) {
+    let expiresAt = null;
+    const ttl = Number(expiresIn);
+    if (Number.isFinite(ttl) && ttl > 0 && ttl <= 366 * 86400) expiresAt = now() + ttl * 1000;
+    try {
+      const exp = JSON.parse(Buffer.from(accessToken.split('.')[1], 'base64url').toString()).exp;
+      // Expiry is only a hint. PW must verify imported credentials remotely.
+      if (Number.isFinite(exp) && exp > 0) expiresAt = expiresAt === null ? exp * 1000 : Math.min(expiresAt, exp * 1000);
+    } catch { /* Opaque tokens are also supported. */ }
+    return expiresAt;
   }
   async function persist(value) {
     await mkdir(dataDir, { recursive: true, mode: 0o700 });
@@ -134,15 +147,26 @@ export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now,
           username: pending.phone, otp, client_id: 'system-admin', grant_type: 'password', organizationId: ORGANIZATION
         }, pending.device);
         if (typeof data?.access_token !== 'string' || !data.access_token || /[\r\n]/.test(data.access_token)) throw new LoginError(424, 'PW returned no usable access token.', { code: 'PW_NO_TOKEN' });
-        let expiresAt = null;
-        const ttl = Number(data.expires_in);
-        if (Number.isFinite(ttl) && ttl > 0 && ttl <= 366 * 86400) expiresAt = now() + ttl * 1000;
-        try {
-          const exp = JSON.parse(Buffer.from(data.access_token.split('.')[1], 'base64url').toString()).exp;
-          // JWT expiry is used only as a hint, never as proof that PW accepts the token.
-          if (Number.isFinite(exp) && exp > 0) expiresAt = expiresAt === null ? exp * 1000 : Math.min(expiresAt, exp * 1000);
-        } catch { /* Opaque tokens are valid too. */ }
-        const value = { accessToken: data.access_token, expiresAt, connectedAt: now(), maskedPhone: `+91 ••••••${pending.phone.slice(-4)}` };
+        const expiresAt = tokenExpiry(data.access_token, data.expires_in);
+        const value = { accessToken: data.access_token, expiresAt, connectedAt: now(), method: 'otp', maskedPhone: `+91 ••••••${pending.phone.slice(-4)}` };
+        await persist(value);
+        saved = value; pending = null; unreadable = false;
+        return state();
+      });
+    },
+    importToken(input) {
+      return exclusive(async () => {
+        if (typeof input !== 'string' || input.length > 16000) throw new LoginError(400, 'Paste the Authorization value from your own PW session.');
+        const accessToken = input.trim().replace(/^authorization:\s*/i, '').replace(/^bearer\s+/i, '');
+        if (accessToken.length < 16 || !/^[A-Za-z0-9._~+\/=-]+$/.test(accessToken)) throw new LoginError(400, 'Paste a token or Bearer token value, without quotes, line breaks, or other headers.');
+        const expiresAt = tokenExpiry(accessToken);
+        if (expiresAt !== null && expiresAt <= now()) throw new LoginError(400, 'This token has expired. Sign in on PW and copy a fresh Authorization value.');
+        if (now() < nextImportAt) throw new LoginError(429, 'Wait five seconds before checking another session.');
+        nextImportAt = now() + 5000;
+        const device = randomUUID();
+        const data = await api('/v3/oauth/verify-token', { randomId: device, organizationId: ORGANIZATION }, device, `Bearer ${accessToken}`);
+        if (data?.isVerified !== true) throw new LoginError(424, 'PW did not confirm this session. Nothing was saved. Sign in on PW and try a fresh token.', { code: 'PW_TOKEN_UNVERIFIED' });
+        const value = { accessToken, expiresAt, connectedAt: now(), method: 'token', maskedPhone: null };
         await persist(value);
         saved = value; pending = null; unreadable = false;
         return state();
