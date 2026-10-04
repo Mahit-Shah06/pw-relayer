@@ -2,7 +2,7 @@ module.exports = {
   apps: [{
     name: 'pw-relayer',
     cwd: __dirname,
-    script: './server.mjs',
+    script: './start.mjs',
     interpreter: 'node',
     node_args: '--env-file=.env',
     instances: 1,

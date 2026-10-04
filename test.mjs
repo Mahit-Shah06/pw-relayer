@@ -54,3 +54,30 @@ test('connector, HLS relay, authentication, storage and failure recovery', async
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('entry point starts when imported by a process-manager wrapper', async () => {
+  const { spawn } = await import('node:child_process');
+  const { once } = await import('node:events');
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'pw-relayer-start-'));
+  await writeFile(path.join(dir, 'sources.json'), '{"sources":[]}');
+  // argv[1] points to the manager, not the imported application.
+  const code = `process.argv[1] = '/fake/process-manager.cjs'; await import(${JSON.stringify(new URL('./start.mjs', import.meta.url).href)});`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code], {
+    cwd: dir,
+    env: { ...process.env, ACCESS_TOKEN: 'a'.repeat(32), HOST: '127.0.0.1', PORT: '0', CONFIG_PATH: './sources.json', DATA_DIR: './data' },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  const exited = once(child, 'exit');
+  try {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Imported entry point did not start')), 5000);
+      child.stdout.on('data', chunk => { if (chunk.toString().includes('pw-relayer listening')) { clearTimeout(timeout); resolve(); } });
+      child.once('exit', code => { clearTimeout(timeout); reject(new Error(`Early exit: ${code}`)); });
+      child.once('error', reject);
+    });
+  } finally {
+    child.kill('SIGTERM');
+    await exited;
+    await rm(dir, { recursive: true, force: true });
+  }
+});

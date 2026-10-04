@@ -189,9 +189,13 @@ export function createApp({ configPath = process.env.CONFIG_PATH || './sources.j
     return server.address();
   }, async stop() { clearInterval(timer); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); } };
 }
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+export async function startServer() {
   const app = createApp();
   await app.start();
   console.log('pw-relayer listening');
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => { await app.stop(); process.exit(0); });
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  await startServer();
 }
