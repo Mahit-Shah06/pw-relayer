@@ -110,13 +110,13 @@ Open `https://pw.itzzsuperrr.me/` (or your configured HTTPS domain). Unlock the 
 node --env-file=.env -p 'process.env.ACCESS_TOKEN'
 ```
 
-Do not paste the key into chat, public JavaScript, or your Git repository. The page clears the owner-key field after submission and keeps no key in browser storage. Select **Phone & OTP** after unlocking, then enter your PW mobile number (India, +91), request an OTP, and enter the code. Spaces in pasted numbers, including non-breaking spaces, are removed automatically; extra digits and letters are not silently discarded. Do not send your OTP to anyone else.
+Do not paste the key into chat, public JavaScript, or your Git repository. The page clears the owner-key field after submission and keeps no key in browser storage. Direct OTP is disabled unless `PW_CAPTCHA_SITE_KEY` is configured with a PW-compatible key that permits your domain. An unrelated Turnstile key is insufficient. With that configuration, select **Phone & OTP**, complete the browser CAPTCHA, then enter your PW mobile number (India, +91), request an OTP, and enter the code. Spaces in pasted numbers, including non-breaking spaces, are removed automatically; extra digits and letters are not silently discarded. Do not send your OTP to anyone else.
 
 The owner session uses an HttpOnly, Secure, SameSite=Strict cookie, lasts eight hours, and is cleared by server restarts. POST routes require a matching Origin and CSRF token. An optional `PUBLIC_ORIGIN=https://pw.itzzsuperrr.me` in `.env` pins the accepted browser origin; otherwise the app uses the host and HTTPS scheme set by your trusted Nginx proxy. Keep the service bound to localhost when using PM2. HTTPS is required for the owner cookie (browsers allow localhost for local development).
 
 PW authentication endpoints used by this adapter:
 
-- `POST https://api.penpencil.co/v1/users/get-otp?smsType=0`
+- `POST https://api.penpencil.co/v1/users/get-otp-secure?smsType=0`
 - `POST https://api.penpencil.co/v3/oauth/token?smsType=0&fallback=true`
 
 These formats were found in the user's existing local PW client, not a public partner API specification. Live acceptance is unverified. PW may change the endpoints, require a challenge, or reject server-originated login. The service reports failure in those cases; it does not bypass CAPTCHA, device checks, or access controls. No real phone number/OTP is used during automated tests, and sending SMS is never automatically retried.
@@ -146,7 +146,9 @@ pm2 logs pw-relayer --lines 40 --nostream
 
 Provider dependency failures now return structured JSON with HTTP 424 instead of being presented as generic gateway 502 failures. They are still failures. This distinguishes them from an actual Nginx/Cloudflare 502. If the browser still receives HTML and no matching request appears in PM2 logs, inspect the proxy path. If Nginx has inherited error-page interception enabled, set `proxy_intercept_errors off;` inside this site's proxy location, then validate/reload Nginx. Do not replace the Certbot-managed TLS configuration.
 
-The public PW login bundle inspected on 2026-10-04 includes optional CAPTCHA-backed OTP endpoints and CAPTCHA token/site-key fields. The current adapter does not implement that browser challenge flow. A provider HTTP 403 confirms rejection but does not identify whether a challenge, request requirement, or server access restriction caused it; changing endpoint names alone is not a verified fix.
+On 2026-10-04 a controlled request from the VPS confirmed the old endpoint returns HTTP 403 with “Flow is deprecated, please use secure flow.” This does not establish that the phone number is blocked. The adapter now uses only the secure endpoint and requires a browser CAPTCHA token and server-configured site key, with no legacy fallback or automatic SMS retry.
+
+PW's current public CAPTCHA key returned error `110200` on `pw.itzzsuperrr.me`: [Cloudflare documents this as Domain not authorized](https://developers.cloudflare.com/turnstile/troubleshooting/client-side-errors/error-codes/). Direct OTP remains unavailable on this domain without a PW-compatible CAPTCHA configuration that authorizes it. The default UI explains this and offers existing-session import. The secure request wiring is tested with simulated responses; successful live OTP remains unverified.
 
 
 ## Import an existing PW session
@@ -162,7 +164,7 @@ The form accepts a raw token, `Bearer <token>`, or `Authorization: Bearer <token
 
 Treat the copied value like a password. Paste it only into your own HTTPS relay, never into chat or a GitHub issue. It may expire, be revoked, or be bound to PW's original device/session context. Import cannot guarantee PW will accept the token from your VPS. An access-only import cannot renew itself; provide the matching refresh token to configure automatic renewal. Expiry is shown when the token contains an expiry claim; otherwise it is unknown.
 
-The existing-session flow uses `POST /admin/api/pw/import-token`, guarded by owner authentication, CSRF checks, and the same-origin policy. Its upstream verification request follows the public PW SDK format: `POST /v3/oauth/verify-token` with organization and random-device context. The current public SDK also supplies `client-type: WEB` and an organization `client-id` header; these headers are now included in all PW authentication requests. This fixes a request-format difference but has not been verified to resolve the live OTP 403. No real SMS was sent during these changes.
+The existing-session flow uses `POST /admin/api/pw/import-token`, guarded by owner authentication, CSRF checks, and the same-origin policy. Its upstream verification request follows the public PW SDK format: `POST /v3/oauth/verify-token` with organization and random-device context. The current public SDK also supplies `client-type: WEB` and an organization `client-id` header; these headers are now included in all PW authentication requests. These headers alone do not fix the retired OTP flow or CAPTCHA domain restriction.
 
 
 ## Automatic renewal

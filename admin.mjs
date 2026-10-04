@@ -36,7 +36,7 @@ export function createAdmin({ token, pw, now = Date.now, publicOrigin = process.
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     try {
       if (url.pathname === '/' && req.method === 'GET') { res.writeHead(302, { Location: '/admin/' }); res.end(); return true; }
       if (assets.has(url.pathname) && req.method === 'GET') {
@@ -73,7 +73,7 @@ export function createAdmin({ token, pw, now = Date.now, publicOrigin = process.
         case '/admin/api/logout':
           sessions.delete(id); pw.cancelPending(id);
           res.setHeader('Set-Cookie', cookie('', 0)); send(200, { ok: true }); break;
-        case '/admin/api/pw/send-otp': send(200, await pw.sendOtp(id, body.phone)); break;
+        case '/admin/api/pw/send-otp': send(200, await pw.sendOtp(id, body.phone, body.captchaToken)); break;
         case '/admin/api/pw/verify-otp': send(200, await pw.verifyOtp(id, body.otp)); break;
         case '/admin/api/pw/import-token': send(200, await pw.importToken(body.token, body.refreshToken, body.deviceId)); break;
         case '/admin/api/pw/refresh': await pw.refresh({ force: true }); send(200, pw.state()); break;

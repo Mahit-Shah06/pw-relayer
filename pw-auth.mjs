@@ -11,7 +11,7 @@ export class LoginError extends Error {
 
 // This adapter follows the existing local PW client's request format. It is not
 // a documented public integration. Never retry OTP sends or bypass challenges.
-export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now, log = event => console.info(JSON.stringify(event)), clientId = process.env.PW_CLIENT_ID || 'system-admin', clientSecret = process.env.PW_CLIENT_SECRET || '' }) {
+export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now, log = event => console.info(JSON.stringify(event)), clientId = process.env.PW_CLIENT_ID || 'system-admin', clientSecret = process.env.PW_CLIENT_SECRET || '', captchaSiteKey = process.env.PW_CAPTCHA_SITE_KEY || '' }) {
   const filename = path.join(dataDir, '.pw-session.enc');
   const key = Buffer.from(hkdfSync('sha256', secret, 'pw-relayer', 'pw-session-v1', 32));
   let saved = null, pending = null, busy = false, nextSendAt = 0, nextImportAt = 0, unreadable = false;
@@ -26,6 +26,7 @@ export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now,
       method: saved?.method || 'otp',
       expiresAt: saved?.expiresAt || null,
       unreadable,
+      otp: { available: Boolean(captchaSiteKey), siteKey: captchaSiteKey || null },
       autoRefresh: Boolean(saved?.refreshToken),
       refreshStatus: saved?.needsLogin ? 'login_required' : renewal ? 'refreshing' : !saved?.refreshToken ? 'unavailable' : saved.nextRetryAt > now() ? 'retrying' : 'enabled',
       lastRefreshedAt: saved?.lastRefreshedAt || null,
@@ -83,7 +84,8 @@ export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now,
     if (!response.ok || result?.success !== true) {
       // Classify recognized messages, but never forward/log provider response text:
       // it may include the phone number, OTP, or credentials.
-      const detail = String(result?.error?.message || result?.message || '').toLowerCase();
+      const detail = String(result?.error?.message || result?.errorMessage || result?.message || '').toLowerCase();
+      if (/flow is deprecated|use secure flow/.test(detail)) throw fail('PW_OTP_DEPRECATED', 'PW has retired this OTP flow. Secure login requires its approved CAPTCHA verification.');
       if (/captcha|challenge|security error/.test(detail)) throw fail('PW_CHALLENGE', 'PW requires an additional security check. Complete login on its official site; this connector cannot complete that challenge.');
       if (operation === 'refresh-token' && /invalid_grant|refresh.*(?:expir|revok|invalid)|invalid.*refresh/.test(detail)) throw fail('PW_REFRESH_INVALID', 'PW says the refresh token is no longer valid. Reconnect your account.');
       if (operation === 'refresh-token') throw fail('PW_REFRESH_REJECTED', `PW rejected session renewal (HTTP ${response.status}). Reconnect if the refresh token expired or was revoked; the server may also require PW client configuration.`);
@@ -201,15 +203,17 @@ export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now,
         if (err.code !== 'ENOENT') unreadable = true;
       }
     },
-    sendOtp(ownerId, phone) {
+    sendOtp(ownerId, phone, captchaToken) {
       phone = normalizePhone(phone);
       return exclusive(async () => {
         if (typeof phone !== 'string' || !/^[6-9]\d{9}$/.test(phone)) throw new LoginError(400, 'Enter a valid 10-digit Indian mobile number.');
+        if (!captchaSiteKey) throw new LoginError(409, 'Direct OTP is unavailable: PW requires a CAPTCHA configuration that accepts this domain. Sign in on PW and use Existing session.', { code: 'PW_OTP_CONFIGURATION' });
         if (now() < nextSendAt) throw new LoginError(429, 'Wait 60 seconds between OTP requests.');
+        if (typeof captchaToken !== 'string' || !captchaToken.trim() || captchaToken.length > 4096) throw new LoginError(400, 'Complete the CAPTCHA before requesting an OTP.', { code: 'PW_CAPTCHA_REQUIRED' });
         nextSendAt = now() + 60000;
         pending = null;
         const device = randomUUID();
-        await api('/v1/users/get-otp?smsType=0', { username: phone, countryCode: '+91', organizationId: ORGANIZATION }, device);
+        await api('/v1/users/get-otp-secure?smsType=0', { username: phone, countryCode: '+91', organizationId: ORGANIZATION, captchaToken, captchaSiteKey }, device);
         pending = { ownerId, phone, device, expiresAt: now() + 5 * 60000, attempts: 0 };
         return { sent: true, maskedPhone: `+91 ••••••${phone.slice(-4)}`, retryAfter: 60 };
       });

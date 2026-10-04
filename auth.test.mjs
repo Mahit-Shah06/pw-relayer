@@ -23,7 +23,7 @@ test('owner login, CSRF, OTP, persistence and disconnect over HTTP', async () =>
   };
   const configPath = path.join(dir, 'sources.json');
   await writeFile(configPath, '{"sources":[]}');
-  let app = createApp({ configPath, dataDir: dir, token: secret, pwRequest: mock });
+  let app = createApp({ pwCaptchaSiteKey: 'test-site-key', configPath, dataDir: dir, token: secret, pwRequest: mock });
   let base = '', cookie = '', csrf = '';
   async function start() { const address = await app.start(0, '127.0.0.1'); base = `http://127.0.0.1:${address.port}`; }
   const post = (route, body, extra = {}) => fetch(base + '/admin/api/' + route, {
@@ -49,8 +49,11 @@ test('owner login, CSRF, OTP, persistence and disconnect over HTTP', async () =>
     await login();
     assert.equal((await post('pw/send-otp', { phone }, { 'X-CSRF-Token': 'wrong' })).status, 403);
     assert.equal((await post('pw/send-otp', { phone: '../invalid' })).status, 400);
-    const sent = await post('pw/send-otp', { phone: ' 98765 43210 ' });
+    const sent = await post('pw/send-otp', { phone: ' 98765 43210 ', captchaToken: 'test-captcha-token' });
     assert.equal(calls[0].body.username, phone);
+    assert.equal(calls[0].url, 'https://api.penpencil.co/v1/users/get-otp-secure?smsType=0');
+    assert.equal(calls[0].body.captchaToken, 'test-captcha-token');
+    assert.equal(calls[0].body.captchaSiteKey, 'test-site-key');
     assert.equal(sent.status, 200);
     assert.equal((await sent.json()).maskedPhone, '+91 ••••••3210');
     assert.equal((await post('pw/send-otp', { phone })).status, 429);
@@ -73,7 +76,7 @@ test('owner login, CSRF, OTP, persistence and disconnect over HTTP', async () =>
     assert.equal((await stat(path.join(dir, '.pw-session.enc'))).mode & 0o777, 0o600);
     assert.equal((await post('pw/verify-otp', { otp: '123456' })).status, 400);
     await app.stop();
-    app = createApp({ configPath, dataDir: dir, token: secret, pwRequest: mock });
+    app = createApp({ pwCaptchaSiteKey: 'test-site-key', configPath, dataDir: dir, token: secret, pwRequest: mock });
     await start();
     assert.equal((await fetch(base + '/admin/api/session', { headers: { Cookie: cookie } })).status, 401);
     await login();
@@ -89,14 +92,14 @@ test('owner login, CSRF, OTP, persistence and disconnect over HTTP', async () =>
 test('PW session expires, credentials stay origin-bound, wrong encryption key fails closed', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'pw-auth-store-'));
   let time = 1000000;
-  const auth = createPwAuth({ dataDir: dir, secret, now: () => time, request: async url => success(url.includes('get-otp') ? {} : { access_token: providerToken, expires_in: 60 }) });
+  const auth = createPwAuth({ captchaSiteKey: 'test-site-key', dataDir: dir, secret, now: () => time, request: async url => success(url.includes('get-otp') ? {} : { access_token: providerToken, expires_in: 60 }) });
   try {
-    await auth.sendOtp('owner', phone);
+    await auth.sendOtp('owner', phone, 'test-captcha-token');
     await assert.rejects(auth.verifyOtp('different-owner', '123456'), { status: 400 });
     await auth.verifyOtp('owner', '123456');
     assert.equal(auth.authorization('https://api.penpencil.co/v1/example'), `Bearer ${providerToken}`);
     assert.throws(() => auth.authorization('https://api.penpencil.co.attacker.example/'), /only be sent/);
-    const wrong = createPwAuth({ dataDir: dir, secret: 'a-different-secret' });
+    const wrong = createPwAuth({ captchaSiteKey: 'test-site-key', dataDir: dir, secret: 'a-different-secret' });
     await wrong.load(); assert.equal(wrong.state().connected, false); assert.equal(wrong.state().unreadable, true);
     time += 61000;
     assert.equal(auth.state().connected, false); assert.equal(auth.state().expired, true);
@@ -107,20 +110,20 @@ test('PW session expires, credentials stay origin-bound, wrong encryption key fa
 test('no automatic OTP retries; verification attempts are bounded and errors are redacted', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'pw-auth-limit-'));
   let count = 0;
-  const auth = createPwAuth({ dataDir: dir, secret, request: async url => {
+  const auth = createPwAuth({ captchaSiteKey: 'test-site-key', dataDir: dir, secret, request: async url => {
     count++;
     if (url.includes('get-otp')) return success({});
     return new Response(JSON.stringify({ success: false, error: { message: providerToken } }), { status: 400 });
   } });
   try {
-    await auth.sendOtp('owner', phone);
+    await auth.sendOtp('owner', phone, 'test-captcha-token');
     for (let i = 0; i < 5; i++) await assert.rejects(auth.verifyOtp('owner', '123456'), error => error.status === 424 && !error.message.includes(providerToken));
     await assert.rejects(auth.verifyOtp('owner', '123456'), { status: 429 });
     assert.equal(count, 6);
     let sends = 0;
-    const failed = createPwAuth({ dataDir: dir, secret, request: async () => { sends++; throw new Error('network failure'); } });
-    await assert.rejects(failed.sendOtp('owner', phone), { status: 424 });
-    await assert.rejects(failed.sendOtp('owner', phone), { status: 429 });
+    const failed = createPwAuth({ captchaSiteKey: 'test-site-key', dataDir: dir, secret, request: async () => { sends++; throw new Error('network failure'); } });
+    await assert.rejects(failed.sendOtp('owner', phone, 'test-captcha-token'), { status: 424 });
+    await assert.rejects(failed.sendOtp('owner', phone, 'test-captcha-token'), { status: 429 });
     assert.equal(sends, 1);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
@@ -136,8 +139,8 @@ test('provider diagnostics distinguish HTML, DNS, TLS, timeout, and rejection wi
   ];
   for (const [code, request] of cases) {
     const events = [];
-    const auth = createPwAuth({ dataDir: '/unused', secret, request, log: event => events.push(event) });
-    await assert.rejects(auth.sendOtp('owner', phone), error => {
+    const auth = createPwAuth({ captchaSiteKey: 'test-site-key', dataDir: '/unused', secret, request, log: event => events.push(event) });
+    await assert.rejects(auth.sendOtp('owner', phone, 'test-captcha-token'), error => {
       assert.equal(error.details.code, code);
       assert.equal(error.status, code === 'PW_RATE_LIMIT' ? 429 : 424);
       assert.match(error.message, /Reference:/);
@@ -167,7 +170,7 @@ test('imported tokens are remotely verified, encrypted, and never replace a good
     calls.push({ url, options });
     return reject ? new Response(JSON.stringify({ success: false, message: 'private-token-debug' }), { status: 401 }) : success({ isVerified: !unverified });
   };
-  const auth = createPwAuth({ dataDir: dir, secret, request, now: () => time, log: event => events.push(event) });
+  const auth = createPwAuth({ captchaSiteKey: 'test-site-key', dataDir: dir, secret, request, now: () => time, log: event => events.push(event) });
   try {
     for (const prefix of ['', 'Bearer ', 'Authorization: Bearer ']) {
       time += 6000;
@@ -181,7 +184,7 @@ test('imported tokens are remotely verified, encrypted, and never replace a good
     }
     const before = await readFile(path.join(dir, '.pw-session.enc'), 'utf8');
     assert.ok(!before.includes(providerToken));
-    const reloaded = createPwAuth({ dataDir: dir, secret, request });
+    const reloaded = createPwAuth({ captchaSiteKey: 'test-site-key', dataDir: dir, secret, request });
     await reloaded.load();
     assert.equal(reloaded.authorization('https://api.penpencil.co/test'), `Bearer ${providerToken}`);
     time += 6000; reject = true;
@@ -206,7 +209,7 @@ test('token-import HTTP route requires owner access and CSRF, and never echoes t
   const configPath = path.join(dir, 'sources.json');
   await writeFile(configPath, '{"sources":[]}');
   let calls = 0;
-  const app = createApp({ configPath, dataDir: dir, token: secret, pwRequest: async () => { calls++; return success({ isVerified: true }); } });
+  const app = createApp({ pwCaptchaSiteKey: 'test-site-key', configPath, dataDir: dir, token: secret, pwRequest: async () => { calls++; return success({ isVerified: true }); } });
   try {
     const address = await app.start(0, '127.0.0.1');
     const base = `http://127.0.0.1:${address.port}`;
@@ -227,4 +230,29 @@ test('token-import HTTP route requires owner access and CSRF, and never echoes t
     assert.equal((await post('pw/import-token', { token: providerToken })).status, 429);
     assert.equal(calls, 1);
   } finally { await app.stop(); await rm(dir, { recursive: true, force: true }); }
+});
+
+
+test('secure OTP requires configured CAPTCHA and a fresh browser token before any provider request', async () => {
+  let calls = 0;
+  const request = async () => { calls++; return success({}); };
+  const unconfigured = createPwAuth({ dataDir: '/unused', secret, captchaSiteKey: '', request });
+  assert.equal(unconfigured.state().otp.available, false);
+  await assert.rejects(unconfigured.sendOtp('owner', phone, 'token'), { status: 409, details: { code: 'PW_OTP_CONFIGURATION' } });
+  const configured = createPwAuth({ dataDir: '/unused', secret, captchaSiteKey: 'test-site-key', request });
+  await assert.rejects(configured.sendOtp('owner', phone), { status: 400, details: { code: 'PW_CAPTCHA_REQUIRED' } });
+  assert.equal(calls, 0);
+});
+
+test('deprecated OTP response is identified without retry or legacy fallback', async () => {
+  let calls = 0;
+  const events = [];
+  const auth = createPwAuth({ dataDir: '/unused', secret, captchaSiteKey: 'test-site-key', log: event => events.push(event), request: async () => {
+    calls++;
+    return new Response(JSON.stringify({ success: false, errorMessage: 'Flow is deprecated, please use secure flow' }), { status: 403 });
+  } });
+  await assert.rejects(auth.sendOtp('owner', phone, 'private-captcha-token'), error => error.details.code === 'PW_OTP_DEPRECATED' && error.details.providerStatus === 403);
+  assert.equal(calls, 1);
+  assert.ok(!JSON.stringify(events).includes('private-captcha-token'));
+  assert.ok(!JSON.stringify(events).includes(phone));
 });

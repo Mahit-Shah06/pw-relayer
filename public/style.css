@@ -80,3 +80,5 @@ a { color: #c4b5ff; }
 
 .replace-session { margin-top: 22px; padding: 8px 0; }
 #renewal-status { margin-bottom: 12px; }
+
+.captcha { margin-top: 18px; min-height: 0; }

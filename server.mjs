@@ -9,10 +9,10 @@ import { createHmac, timingSafeEqual, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export function createApp({ configPath = process.env.CONFIG_PATH || './sources.json', dataDir = process.env.DATA_DIR || './data', token = process.env.ACCESS_TOKEN, pwRequest = fetch, sourceRequest = fetch, interval = Number(process.env.SYNC_INTERVAL_SECONDS || 300) * 1000 } = {}) {
+export function createApp({ configPath = process.env.CONFIG_PATH || './sources.json', dataDir = process.env.DATA_DIR || './data', token = process.env.ACCESS_TOKEN, pwRequest = fetch, pwCaptchaSiteKey = process.env.PW_CAPTCHA_SITE_KEY || '', sourceRequest = fetch, interval = Number(process.env.SYNC_INTERVAL_SECONDS || 300) * 1000 } = {}) {
   if (!token || token.length < 32) throw new Error('ACCESS_TOKEN must contain at least 32 characters');
   if (!Number.isFinite(interval) || interval < 1000) throw new Error('Invalid sync interval');
-  const pw = createPwAuth({ dataDir, secret: token, request: pwRequest });
+  const pw = createPwAuth({ dataDir, secret: token, request: pwRequest, captchaSiteKey: pwCaptchaSiteKey });
   const admin = createAdmin({ token, pw });
   const states = new Map();
   let timer, syncing = false, active = 0;

@@ -53,8 +53,9 @@
           <p class="hint">Access-only login expires. With a refresh token, the relay can attempt renewal; PW can still revoke or reject the session.</p>
         </div>
         <div id="otp-panel" hidden>
-        <h2>Connect with an OTP</h2><p>Enter the mobile number you use for PW. We’ll submit your login request to PW from this server.</p>
-        <form id="phone-form"><label for="phone">Mobile number</label><div class="phone-field"><span>+91</span><input id="phone" type="tel" inputmode="numeric" autocomplete="tel-national" pattern="[6-9][0-9]{9}" required placeholder="10-digit mobile number"></div><button id="send-otp" type="submit">Send OTP <span aria-hidden="true">→</span></button></form>
+        <h2>Secure OTP login</h2>
+        <div id="otp-unavailable" class="note">PW retired its old OTP API. Direct login needs PW’s CAPTCHA to accept this domain. <a href="https://www.pw.live/" target="_blank" rel="noopener noreferrer">Sign in on PW</a>, then use Existing session here.</div>
+        <form id="phone-form"><label for="phone">Mobile number</label><div class="phone-field"><span>+91</span><input id="phone" type="tel" inputmode="numeric" autocomplete="tel-national" pattern="[6-9][0-9]{9}" required placeholder="10-digit mobile number"></div><div id="pw-captcha" class="captcha"></div><button id="send-otp" type="submit">Send OTP <span aria-hidden="true">→</span></button></form>
         <form id="otp-form" hidden><label for="otp">Verification code</label><p class="hint" id="otp-destination"></p><input id="otp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{4,8}" minlength="4" maxlength="8" required placeholder="Enter your OTP"><button type="submit">Verify & connect</button><p class="hint">Codes expire. You can request another after the countdown.</p></form>
         <p class="hint">PW may reject server-side OTP requests or require a CAPTCHA. If that happens, sign in on PW and use Existing session.</p>
         </div>
