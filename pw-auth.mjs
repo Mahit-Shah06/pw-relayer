@@ -1,6 +1,7 @@
 import { readFile, writeFile, rename, unlink, mkdir } from 'node:fs/promises';
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes, randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { normalizePhone } from './public/phone.js';
 
 const API = 'https://api.penpencil.co';
 const ORGANIZATION = '5eb393ee95fab7468a79d189';
@@ -111,6 +112,7 @@ export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now,
       }
     },
     sendOtp(ownerId, phone) {
+      phone = normalizePhone(phone);
       return exclusive(async () => {
         if (typeof phone !== 'string' || !/^[6-9]\d{9}$/.test(phone)) throw new LoginError(400, 'Enter a valid 10-digit Indian mobile number.');
         if (now() < nextSendAt) throw new LoginError(429, 'Wait 60 seconds between OTP requests.');

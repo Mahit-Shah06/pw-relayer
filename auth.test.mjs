@@ -47,7 +47,8 @@ test('owner login, CSRF, OTP, persistence and disconnect over HTTP', async () =>
     await login();
     assert.equal((await post('pw/send-otp', { phone }, { 'X-CSRF-Token': 'wrong' })).status, 403);
     assert.equal((await post('pw/send-otp', { phone: '../invalid' })).status, 400);
-    const sent = await post('pw/send-otp', { phone });
+    const sent = await post('pw/send-otp', { phone: ' 98765 43210 ' });
+    assert.equal(calls[0].body.username, phone);
     assert.equal(sent.status, 200);
     assert.equal((await sent.json()).maskedPhone, '+91 ••••••3210');
     assert.equal((await post('pw/send-otp', { phone })).status, 429);
@@ -145,4 +146,13 @@ test('provider diagnostics distinguish HTML, DNS, TLS, timeout, and rejection wi
     const logs = JSON.stringify(events);
     for (const value of [phone, secret, providerToken, 'private-response']) assert.ok(!logs.includes(value));
   }
+});
+
+
+test('phone normalization removes formatting spaces without truncating or accepting letters', async () => {
+  const { normalizePhone } = await import('./public/phone.js');
+  for (const value of ['98765 43210', ' 98765 43210 ', '98765\u00a043210', '98 765 43 210']) assert.equal(normalizePhone(value), phone);
+  assert.equal(normalizePhone('98765432101'), '98765432101');
+  assert.equal(normalizePhone('98765a43210'), '98765a43210');
+  assert.equal(normalizePhone(null), null);
 });

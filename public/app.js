@@ -1,4 +1,5 @@
 import { parseApiResponse } from './api-response.js';
+import { normalizePhone } from './phone.js';
 const $ = id => document.getElementById(id);
 let csrf = '', cooldown = 0, working = false;
 function message(text, error = false) { $('message').textContent = text; $('message').classList.toggle('error', error); }
@@ -46,10 +47,21 @@ $('unlock-form').addEventListener('submit', event => {
     message('Owner access verified.'); account(data.pw);
   });
 });
+$('phone').addEventListener('input', () => {
+  const field = $('phone');
+  const original = field.value;
+  const caret = field.selectionStart ?? original.length;
+  const cleaned = normalizePhone(original);
+  if (cleaned !== original) {
+    const nextCaret = normalizePhone(original.slice(0, caret)).length;
+    field.value = cleaned;
+    field.setSelectionRange(nextCaret, nextCaret);
+  }
+});
 $('phone-form').addEventListener('submit', event => {
   event.preventDefault();
   void action(async () => {
-    const phone = $('phone').value.trim();
+    const phone = normalizePhone($('phone').value);
     $('otp-form').hidden = true; $('otp').value = '';
     // Match the server's no-retry policy even when the upstream request fails.
     cooldown = Date.now() + 60000;
