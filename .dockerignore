@@ -1,3 +1,8 @@
 *
 !package.json
 !server.mjs
+!start.mjs
+!admin.mjs
+!pw-auth.mjs
+!public/
+!public/**

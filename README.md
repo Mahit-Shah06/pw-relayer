@@ -1,6 +1,6 @@
 # pw-relayer
 
-A dependency-free Node.js 22 HTTP connector, HLS relay, and local file store. Configure direct media, document, or data URLs. PW login, course discovery, token renewal, DRM handling, and a website/player are not implemented. No PW endpoint has been tested.
+A dependency-free Node.js 22 HTTP connector, HLS relay, and local file store. Configure direct media, document, or data URLs. Includes an owner-only PW OTP login page. The PW adapter follows the request format in the existing local PW client; it is not a documented public integration and has not been validated with a real PW account. Course discovery, token renewal, DRM handling, and a viewer/player are not implemented.
 
 ## Start on a VPS
 
@@ -24,7 +24,7 @@ The service listens at `127.0.0.1:8080` on the VPS. Put your HTTPS gateway in fr
 
 ## Routes
 
-All routes except `/healthz` require `Authorization: Bearer <ACCESS_TOKEN>`.
+Relay, file, and status routes require `Authorization: Bearer <ACCESS_TOKEN>`. `/healthz` is public. `/` redirects to `/admin/`; the owner console uses a separate protected cookie session after you enter the same owner key.
 
 | Route | Function |
 | --- | --- |
@@ -48,6 +48,7 @@ Your website backend/gateway should authenticate visitors and attach the service
 - `id`: unique letters, numbers, underscores, or hyphens.
 - `type`: `file` for periodic local snapshots, `hls` for playlist rewriting, `relay` for direct HTTP streaming.
 - `url`: direct source URL, not a login or course webpage.
+- `auth`: optional `"pw"` to use the saved PW session for sources on exactly `https://api.penpencil.co`. PW credentials are never attached to other origins or CDN redirects.
 - `headers`: server-side headers for the source origin, e.g. `Authorization` or `Cookie`.
 - `headerEnv`: maps HTTP header names to environment variable names.
 - `allowedOrigins`: exact additional origins permitted for redirects and HLS resources, including scheme and non-default port. Only add trusted origins.
@@ -89,4 +90,39 @@ pm2 save
 
 The setup script preserves existing configuration and creates an empty source list on first run. An empty list starts successfully but does not relay content until you configure sources. The PM2 configuration binds to localhost, port 8080, and loads secrets from `.env`. Only run one instance. If PM2 startup is not already enabled, run `pm2 startup` and execute the command it prints, then `pm2 save`.
 
-Use your existing Nginx HTTPS virtual host to proxy the required routes, preserving `/relay/...` and `/files/...`. Inspect its existing routes before changing it. Do not expose port 8080 in the VPS security group. The hostname alone will not display a website; this project provides backend routes.
+Use your existing Nginx HTTPS virtual host to proxy the required routes, preserving `/relay/...` and `/files/...`. Inspect its existing routes before changing it. Do not expose port 8080 in the VPS security group. The hostname now opens the owner login console. Existing relay/file routes remain backend endpoints.
+
+
+## PW OTP login from your domain
+
+After pulling an update on the VPS:
+
+```sh
+cd ~/pw-relayer
+git pull --ff-only
+npm test
+pm2 restart pw-relayer
+```
+
+Open `https://pw.itzzsuperrr.me/` (or your configured HTTPS domain). Unlock the console with the owner key from `.env`. To display it privately on your VPS:
+
+```sh
+node --env-file=.env -p 'process.env.ACCESS_TOKEN'
+```
+
+Do not paste the key into chat, public JavaScript, or your Git repository. The page clears the owner-key field after submission and keeps no key in browser storage. Once unlocked, enter your PW mobile number (India, +91), request an OTP, and enter the code. Do not send your OTP to anyone else.
+
+The owner session uses an HttpOnly, Secure, SameSite=Strict cookie, lasts eight hours, and is cleared by server restarts. POST routes require a matching Origin and CSRF token. An optional `PUBLIC_ORIGIN=https://pw.itzzsuperrr.me` in `.env` pins the accepted browser origin; otherwise the app uses the host and HTTPS scheme set by your trusted Nginx proxy. Keep the service bound to localhost when using PM2. HTTPS is required for the owner cookie (browsers allow localhost for local development).
+
+PW authentication endpoints used by this adapter:
+
+- `POST https://api.penpencil.co/v1/users/get-otp?smsType=0`
+- `POST https://api.penpencil.co/v3/oauth/token?smsType=0&fallback=true`
+
+These formats were found in the user's existing local PW client, not a public partner API specification. Live acceptance is unverified. PW may change the endpoints, require a challenge, or reject server-originated login. The service reports failure in those cases; it does not bypass CAPTCHA, device checks, or access controls. No real phone number/OTP is used during automated tests, and sending SMS is never automatically retried.
+
+Limits: at most one OTP request per minute, five verification attempts per challenge, and a five-minute local challenge lifetime. Phone/OTP payloads are held only for the active request/challenge and are not logged. Only the last four phone digits are saved. PW tokens never appear in browser responses. The access token is encrypted with AES-256-GCM in `data/.pw-session.enc` using a key derived from `ACCESS_TOKEN`; that file has mode 0600. Keep your `.env` and volume private and back up them together. Changing `ACCESS_TOKEN` makes the old saved session unreadable; connect again to replace it.
+
+“Connected” means a token was returned and saved, and its known expiry has not elapsed; it is not continuous confirmation that PW still accepts the token. Automatic token refresh is not implemented. Revoked/expired sessions require login again. “Lock console” ends browser access while preserving the stored PW session. “Remove saved PW session” deletes this relay's local token, not PW sessions on other devices.
+
+Login alone does not import batches or produce stream URLs. Configured PW API sources can opt into the saved token with `"auth": "pw"`; batch discovery and content importing remain separate work.

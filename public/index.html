@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PW Relayer · Owner console</title>
+  <link rel="stylesheet" href="/admin/style.css"><script src="/admin/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><a class="brand" href="/admin/">PW<span> / </span>RELAYER</a><span class="tag">OWNER CONSOLE</span></header>
+    <div class="intro"><span class="eyebrow">YOUR CONNECTION</span><h1>One place to connect.</h1><p>Connect your PW account to your personal relay.</p></div>
+    <section class="card" id="unlock-panel" hidden>
+      <div class="step">01 / OWNER ACCESS</div><h2>Unlock your console</h2>
+      <p>Use the owner key generated on your VPS. This is separate from your PW login.</p>
+      <form id="unlock-form">
+        <label for="owner-key">Owner key</label><input id="owner-key" type="password" autocomplete="current-password" required placeholder="Paste your relay owner key">
+        <button type="submit">Unlock console <span aria-hidden="true">→</span></button>
+      </form>
+      <details><summary>Where do I find my key?</summary><p>Run this privately in <code>~/pw-relayer</code> on your VPS:</p><code class="command">node --env-file=.env -p 'process.env.ACCESS_TOKEN'</code><p>Keep the key private. It controls your relay.</p></details>
+    </section>
+    <section class="card" id="account-panel" hidden>
+      <div class="card-heading"><span class="step">02 / PW ACCOUNT</span><button id="lock" class="text-button" type="button">Lock console</button></div>
+      <div id="login-panel">
+        <h2>Connect with an OTP</h2><p>Enter the mobile number you use for PW. We’ll submit your login request to PW from this server.</p>
+        <form id="phone-form"><label for="phone">Mobile number</label><div class="phone-field"><span>+91</span><input id="phone" type="tel" inputmode="numeric" autocomplete="tel-national" pattern="[6-9][0-9]{9}" maxlength="10" required placeholder="10-digit mobile number"></div><button id="send-otp" type="submit">Send OTP <span aria-hidden="true">→</span></button></form>
+        <form id="otp-form" hidden><label for="otp">Verification code</label><p class="hint" id="otp-destination"></p><input id="otp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{4,8}" minlength="4" maxlength="8" required placeholder="Enter your OTP"><button type="submit">Verify & connect</button><p class="hint">Codes expire. You can request another after the countdown.</p></form>
+        <p class="hint">If PW requires a CAPTCHA or rejects the connection, use its official site. This connector does not bypass those checks.</p>
+      </div>
+      <div id="connected-panel" hidden><span class="badge">CONNECTED</span><h2>Your session is saved.</h2><p id="account-detail"></p><p>The PW token is encrypted on your VPS and survives restarts.</p><div class="note">Login is ready. Browsing batches and importing lectures or PDFs is the next integration step.</div><button id="disconnect" type="button" class="secondary">Remove saved PW session</button><p class="hint">This removes this relay’s copy. It does not sign you out of PW elsewhere.</p></div>
+    </section>
+    <p id="message" role="status" aria-live="polite">Loading console…</p>
+    <footer>Personal relay · Not an official Physics Wallah website.<br>Your OTP is used for verification and is never saved.</footer>
+  </main>
+</body>
+</html>

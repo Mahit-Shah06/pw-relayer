@@ -1,4 +1,6 @@
 import http from 'node:http';
+import { createPwAuth } from './pw-auth.mjs';
+import { createAdmin } from './admin.mjs';
 import { readFile, mkdir, rename, unlink, stat } from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
@@ -7,9 +9,11 @@ import { createHmac, timingSafeEqual, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export function createApp({ configPath = process.env.CONFIG_PATH || './sources.json', dataDir = process.env.DATA_DIR || './data', token = process.env.ACCESS_TOKEN, interval = Number(process.env.SYNC_INTERVAL_SECONDS || 300) * 1000 } = {}) {
+export function createApp({ configPath = process.env.CONFIG_PATH || './sources.json', dataDir = process.env.DATA_DIR || './data', token = process.env.ACCESS_TOKEN, pwRequest = fetch, interval = Number(process.env.SYNC_INTERVAL_SECONDS || 300) * 1000 } = {}) {
   if (!token || token.length < 32) throw new Error('ACCESS_TOKEN must contain at least 32 characters');
   if (!Number.isFinite(interval) || interval < 1000) throw new Error('Invalid sync interval');
+  const pw = createPwAuth({ dataDir, secret: token, request: pwRequest });
+  const admin = createAdmin({ token, pw });
   const states = new Map();
   let timer, syncing = false, active = 0;
   function equal(a, b) { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); }
@@ -23,6 +27,8 @@ export function createApp({ configPath = process.env.CONFIG_PATH || './sources.j
       ids.add(s.id);
       if (!['relay', 'hls', 'file'].includes(s.type)) throw new Error('Invalid source type');
       validate(s, s.url);
+      if (s.auth !== undefined && s.auth !== 'pw') throw new Error('Unknown auth provider');
+      if (s.auth === 'pw' && new URL(s.url).origin !== 'https://api.penpencil.co') throw new Error('PW auth is restricted to the PW API');
       if (s.maxBytes !== undefined && (!Number.isSafeInteger(s.maxBytes) || s.maxBytes < 1)) throw new Error('Invalid maxBytes');
     }
     return c.sources;
@@ -41,6 +47,7 @@ export function createApp({ configPath = process.env.CONFIG_PATH || './sources.j
     for (const [k, v] of Object.entries(s.headerEnv || {})) {
       if (origin === new URL(s.url).origin && process.env[v]) h[k] = process.env[v];
     }
+    if (s.auth === 'pw' && origin === new URL(s.url).origin) h.Authorization = pw.authorization(url);
     if (range) h.Range = range;
     h['Accept-Encoding'] = 'identity';
     return h;
@@ -111,6 +118,7 @@ export function createApp({ configPath = process.env.CONFIG_PATH || './sources.j
     res.on('close', () => controller.abort());
     try {
       const u = new URL(req.url, 'http://localhost');
+      if (await admin(req, res, u)) return;
       if (u.pathname === '/healthz' && req.method === 'GET') return send(200, { ok: true });
       if (!equal(req.headers.authorization || '', `Bearer ${token}`)) return send(401, { error: 'Unauthorized' });
       if (!['GET', 'HEAD'].includes(req.method)) return send(405, { error: 'Method not allowed' });
@@ -181,6 +189,7 @@ export function createApp({ configPath = process.env.CONFIG_PATH || './sources.j
   });
   return { server, sync, async start(port = Number(process.env.PORT || 8080), host = process.env.HOST || '0.0.0.0') {
     await config(); await mkdir(dataDir, { recursive: true });
+    await pw.load();
     // Remove partial downloads from previous crashes; only run one instance per data directory.
     const { readdir } = await import('node:fs/promises');
     for (const f of await readdir(dataDir)) if (/^[\w-]+\.[\da-f-]+\.tmp$/.test(f)) await unlink(path.join(dataDir, f));
