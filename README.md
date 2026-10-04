@@ -126,3 +126,22 @@ Limits: at most one OTP request per minute, five verification attempts per chall
 “Connected” means a token was returned and saved, and its known expiry has not elapsed; it is not continuous confirmation that PW still accepts the token. Automatic token refresh is not implemented. Revoked/expired sessions require login again. “Sign out” ends browser access while preserving the stored PW session. “Remove saved PW session” deletes this relay's local token, not PW sessions on other devices.
 
 Login alone does not import batches or produce stream URLs. Configured PW API sources can opt into the saved token with `"auth": "pw"`; batch discovery and content importing remain separate work.
+
+
+## Diagnosing OTP failures
+
+A PM2 status of `online` only confirms the process is running. To test the local/public route and outbound PW connectivity without sending any phone number or OTP:
+
+```sh
+npm run diagnose
+```
+
+After a failed login attempt, inspect the request diagnostics:
+
+```sh
+pm2 logs pw-relayer --lines 40 --nostream
+```
+
+`pw.request.started`, `pw.request.failed`, and `pw.request.succeeded` include only the operation, random reference ID, timing, and status/error categories. They never include request bodies, provider response bodies, phone numbers, OTPs, or tokens. Match the page's reference ID to the log entry. `PW_DNS`, `PW_TLS`, and `PW_TIMEOUT` indicate VPS-to-provider connection problems; `PW_NON_JSON`, `PW_REJECTED`, and `PW_CHALLENGE` indicate a response that did not complete the expected login flow. A check against the PW API root may return 404/403; receiving an HTTP response tests connectivity, not successful OTP login.
+
+Provider dependency failures now return structured JSON with HTTP 424 instead of being presented as generic gateway 502 failures. They are still failures. This distinguishes them from an actual Nginx/Cloudflare 502. If the browser still receives HTML and no matching request appears in PM2 logs, inspect the proxy path. If Nginx has inherited error-page interception enabled, set `proxy_intercept_errors off;` inside this site's proxy location, then validate/reload Nginx. Do not replace the Certbot-managed TLS configuration.

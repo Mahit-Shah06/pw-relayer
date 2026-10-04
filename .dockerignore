@@ -6,3 +6,4 @@
 !pw-auth.mjs
 !public/
 !public/**
+!diagnose.mjs

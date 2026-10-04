@@ -8,7 +8,11 @@
 <body>
   <main>
     <header><a class="brand" href="/admin/">PW<span> / </span>RELAYER</a><span class="tag">PRIVATE LOGIN</span></header>
-    <div class="intro"><span class="eyebrow">YOUR CONNECTION</span><h1>One place to connect.</h1><p>Connect your PW account to your personal relay.</p></div>
+    <div class="workspace">
+    <div class="intro"><span class="eyebrow">ACCOUNT CONNECTION</span><h1>Connect your<br>PW account.</h1><p>Sign in once. Keep your session on your own server.</p>
+      <ol class="steps"><li><span>01</span>Verify owner access</li><li><span>02</span>Sign in with your PW OTP</li><li><span>03</span>Save your connection</li></ol>
+    </div>
+    <div class="panels">
     <section class="card" id="unlock-panel" hidden>
       <div class="step">01 / OWNER ACCESS</div><h2>Verify owner access</h2>
       <p>Your owner key keeps this connection private. After this step, sign in to PW with your phone number and OTP.</p>
@@ -29,6 +33,8 @@
       <div id="connected-panel" hidden><span class="badge">CONNECTED</span><h2>Your session is saved.</h2><p id="account-detail"></p><p>The PW token is encrypted on your VPS and survives restarts.</p><div class="note">Login is ready. Browsing batches and importing lectures or PDFs is the next integration step.</div><button id="disconnect" type="button" class="secondary">Remove saved PW session</button><p class="hint">This removes this relay’s copy. It does not sign you out of PW elsewhere.</p></div>
     </section>
     <p id="message" role="status" aria-live="polite">Loading login…</p>
+    </div>
+    </div>
     <footer>Personal relay · Not an official Physics Wallah website.<br>Your OTP is used for verification and is never saved.</footer>
   </main>
 </body>

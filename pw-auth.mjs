@@ -5,12 +5,12 @@ import path from 'node:path';
 const API = 'https://api.penpencil.co';
 const ORGANIZATION = '5eb393ee95fab7468a79d189';
 export class LoginError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, details = {}) { super(message); this.status = status; this.details = details; }
 }
 
 // This adapter follows the existing local PW client's request format. It is not
 // a documented public integration. Never retry OTP sends or bypass challenges.
-export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now }) {
+export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now, log = event => console.info(JSON.stringify(event)) }) {
   const filename = path.join(dataDir, '.pw-session.enc');
   const key = Buffer.from(hkdfSync('sha256', secret, 'pw-relayer', 'pw-session-v1', 32));
   let saved = null, pending = null, busy = false, nextSendAt = 0, unreadable = false;
@@ -32,7 +32,17 @@ export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now 
     try { return await fn(); } finally { busy = false; }
   }
   async function api(route, payload, device) {
-    let response, result;
+    const requestId = randomUUID();
+    const operation = route.includes('get-otp') ? 'send-otp' : 'verify-otp';
+    const started = now();
+    let response, text, result;
+    const record = (event, fields = {}) => log({ event, operation, requestId, elapsedMs: now() - started, ...fields });
+    const fail = (code, message, status = 424, extra = {}) => {
+      const details = { code, requestId, ...(response ? { providerStatus: response.status } : {}), ...extra };
+      record('pw.request.failed', details);
+      return new LoginError(status, `${message} Reference: ${requestId}.`, details);
+    };
+    record('pw.request.started');
     try {
       response = await request(API + route, {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15000),
@@ -42,17 +52,36 @@ export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now 
       const chunks = []; let size = 0;
       for await (const chunk of response.body) {
         size += chunk.length;
-        if (size > 128 * 1024) throw new Error('Oversized response');
+        if (size > 128 * 1024) throw new Error('PW_RESPONSE_TOO_LARGE');
         chunks.push(Buffer.from(chunk));
       }
-      result = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    } catch {
-      throw new LoginError(502, 'PW could not be reached or returned an unsupported response. Try the official PW site if this continues.');
+      text = Buffer.concat(chunks).toString('utf8');
+    } catch (error) {
+      const known = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENETUNREACH', 'EHOSTUNREACH', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY']);
+      const rawCode = error.cause?.code || error.code;
+      const networkCode = known.has(rawCode) ? rawCode : 'UNKNOWN';
+      if (error.name === 'TimeoutError' || /TIMEOUT|TIMEDOUT/.test(networkCode)) throw fail('PW_TIMEOUT', 'The VPS connection to PW timed out. Check outbound connectivity to api.penpencil.co.', 424, { networkCode });
+      if (['ENOTFOUND', 'EAI_AGAIN'].includes(networkCode)) throw fail('PW_DNS', 'The VPS could not resolve api.penpencil.co. Check the server DNS resolver.', 424, { networkCode });
+      if (/CERT|ISSUER|SIGNATURE/.test(networkCode)) throw fail('PW_TLS', 'The VPS could not verify PW’s TLS certificate. Check the server clock and CA certificates.', 424, { networkCode });
+      if (error.message === 'PW_RESPONSE_TOO_LARGE') throw fail('PW_RESPONSE_TOO_LARGE', 'PW returned an unexpectedly large response.');
+      throw fail('PW_NETWORK', 'The VPS could not complete its connection to PW.', 424, { networkCode });
     }
-    if (!response.ok || result.success !== true) {
-      if (response.status === 429) throw new LoginError(429, 'PW is limiting requests. Wait before trying again.');
-      throw new LoginError(502, `PW did not accept this request (HTTP ${response.status}). The OTP may be invalid or expired, or PW may require a challenge on its official site.`);
+    if (response.status === 429) throw fail('PW_RATE_LIMIT', 'PW is limiting requests. Wait before trying again.', 429);
+    try { result = JSON.parse(text); } catch {
+      const html = /^\s*(?:<!doctype\s+html|<html)/i.test(text);
+      const message = `PW returned ${html ? 'an HTML page' : 'non-JSON data'} (HTTP ${response.status}), so its login API did not complete this request.`;
+      throw fail('PW_NON_JSON', message + (response.status === 403 ? ' PW refused access from this server; try the official PW site.' : ''));
     }
+    if (!response.ok || result?.success !== true) {
+      // Classify recognized messages, but never forward/log provider response text:
+      // it may include the phone number, OTP, or credentials.
+      const detail = String(result?.error?.message || result?.message || '').toLowerCase();
+      if (/captcha|challenge|security error/.test(detail)) throw fail('PW_CHALLENGE', 'PW requires an additional security check. Complete login on its official site; this connector cannot complete that challenge.');
+      if (operation === 'verify-otp' && /invalid.*otp|incorrect.*otp|otp.*invalid|otp.*incorrect/.test(detail)) throw fail('PW_INVALID_OTP', 'PW rejected the verification code. Check it and try again.', 400);
+      if (operation === 'verify-otp' && /expir/.test(detail)) throw fail('PW_EXPIRED_OTP', 'PW reports that the code or login request expired. Request a new OTP.', 400);
+      throw fail('PW_REJECTED', `PW rejected the ${operation === 'send-otp' ? 'OTP request' : 'verification'} (HTTP ${response.status}). Its login requirements may have changed.`);
+    }
+    record('pw.request.succeeded', { providerStatus: response.status });
     return result.data;
   }
   async function persist(value) {
@@ -102,7 +131,7 @@ export function createPwAuth({ dataDir, secret, request = fetch, now = Date.now 
         const data = await api('/v3/oauth/token?smsType=0&fallback=true', {
           username: pending.phone, otp, client_id: 'system-admin', grant_type: 'password', organizationId: ORGANIZATION
         }, pending.device);
-        if (typeof data?.access_token !== 'string' || !data.access_token || /[\r\n]/.test(data.access_token)) throw new LoginError(502, 'PW returned no usable access token.');
+        if (typeof data?.access_token !== 'string' || !data.access_token || /[\r\n]/.test(data.access_token)) throw new LoginError(424, 'PW returned no usable access token.', { code: 'PW_NO_TOKEN' });
         let expiresAt = null;
         const ttl = Number(data.expires_in);
         if (Number.isFinite(ttl) && ttl > 0 && ttl <= 366 * 86400) expiresAt = now() + ttl * 1000;

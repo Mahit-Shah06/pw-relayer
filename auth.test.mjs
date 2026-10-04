@@ -16,6 +16,7 @@ test('owner login, CSRF, OTP, persistence and disconnect over HTTP', async () =>
   const calls = [];
   const mock = async (url, options) => {
     calls.push({ url, body: JSON.parse(options.body) });
+    if (JSON.parse(options.body).otp === '000000') return new Response('<!DOCTYPE html>private-provider-page', { status: 502 });
     return url.includes('get-otp') ? success({}) : success({ access_token: providerToken, expires_in: 3600 });
   };
   const configPath = path.join(dir, 'sources.json');
@@ -51,12 +52,19 @@ test('owner login, CSRF, OTP, persistence and disconnect over HTTP', async () =>
     assert.equal((await sent.json()).maskedPhone, '+91 ••••••3210');
     assert.equal((await post('pw/send-otp', { phone })).status, 429);
     assert.equal(calls.length, 1);
+    const rejected = await post('pw/verify-otp', { otp: '000000' });
+    assert.equal(rejected.status, 424);
+    assert.match(rejected.headers.get('content-type'), /application\/json/);
+    const failure = await rejected.json();
+    assert.equal(failure.code, 'PW_NON_JSON');
+    assert.equal(failure.providerStatus, 502);
+    assert.ok(!JSON.stringify(failure).includes('private-provider-page'));
     const result = await post('pw/verify-otp', { otp: '123456' });
     assert.equal(result.status, 200);
     const body = await result.text();
     assert.equal(JSON.parse(body).connected, true);
     assert.ok(!body.includes(providerToken)); assert.ok(!body.includes(phone));
-    assert.equal(calls[1].body.otp, '123456');
+    assert.equal(calls.at(-1).body.otp, '123456');
     const encrypted = await readFile(path.join(dir, '.pw-session.enc'), 'utf8');
     assert.ok(!encrypted.includes(providerToken)); assert.ok(!encrypted.includes('123456'));
     assert.equal((await stat(path.join(dir, '.pw-session.enc'))).mode & 0o777, 0o600);
@@ -103,13 +111,38 @@ test('no automatic OTP retries; verification attempts are bounded and errors are
   } });
   try {
     await auth.sendOtp('owner', phone);
-    for (let i = 0; i < 5; i++) await assert.rejects(auth.verifyOtp('owner', '123456'), error => error.status === 502 && !error.message.includes(providerToken));
+    for (let i = 0; i < 5; i++) await assert.rejects(auth.verifyOtp('owner', '123456'), error => error.status === 424 && !error.message.includes(providerToken));
     await assert.rejects(auth.verifyOtp('owner', '123456'), { status: 429 });
     assert.equal(count, 6);
     let sends = 0;
     const failed = createPwAuth({ dataDir: dir, secret, request: async () => { sends++; throw new Error('network failure'); } });
-    await assert.rejects(failed.sendOtp('owner', phone), { status: 502 });
+    await assert.rejects(failed.sendOtp('owner', phone), { status: 424 });
     await assert.rejects(failed.sendOtp('owner', phone), { status: 429 });
     assert.equal(sends, 1);
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('provider diagnostics distinguish HTML, DNS, TLS, timeout, and rejection without leaking payloads', async () => {
+  const cases = [
+    ['PW_NON_JSON', async () => new Response('<!DOCTYPE html>private-response', { status: 403 })],
+    ['PW_DNS', async () => { throw new Error('private-response', { cause: { code: 'ENOTFOUND' } }); }],
+    ['PW_TLS', async () => { throw new Error('private-response', { cause: { code: 'CERT_HAS_EXPIRED' } }); }],
+    ['PW_TIMEOUT', async () => { const error = new Error('private-response'); error.name = 'TimeoutError'; throw error; }],
+    ['PW_CHALLENGE', async () => new Response(JSON.stringify({ success: false, error: { message: 'Security Error private-response' } }), { status: 403 })],
+    ['PW_RATE_LIMIT', async () => new Response('<!DOCTYPE html>', { status: 429 })]
+  ];
+  for (const [code, request] of cases) {
+    const events = [];
+    const auth = createPwAuth({ dataDir: '/unused', secret, request, log: event => events.push(event) });
+    await assert.rejects(auth.sendOtp('owner', phone), error => {
+      assert.equal(error.details.code, code);
+      assert.equal(error.status, code === 'PW_RATE_LIMIT' ? 429 : 424);
+      assert.match(error.message, /Reference:/);
+      assert.equal(events[0].event, 'pw.request.started');
+      assert.equal(events[1].requestId, error.details.requestId);
+      return true;
+    });
+    const logs = JSON.stringify(events);
+    for (const value of [phone, secret, providerToken, 'private-response']) assert.ok(!logs.includes(value));
+  }
 });

@@ -30,8 +30,8 @@ export function createAdmin({ token, pw, now = Date.now, publicOrigin = process.
   const cookie = (value, age) => `pw_owner=${value}; Path=/admin; HttpOnly; Secure; SameSite=Strict; Max-Age=${age}`;
   return async function admin(req, res, url) {
     if (url.pathname !== '/' && !url.pathname.startsWith('/admin')) return false;
-    const send = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
-    res.setHeader('Cache-Control', 'no-store');
+    const send = (code, body) => { const encoded = JSON.stringify(body); res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(encoded) }); res.end(encoded); };
+    res.setHeader('Cache-Control', 'no-store, no-transform');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-Frame-Options', 'DENY');
@@ -78,7 +78,7 @@ export function createAdmin({ token, pw, now = Date.now, publicOrigin = process.
         default: throw new LoginError(404, 'Not found.');
       }
     } catch (error) {
-      send(error instanceof LoginError ? error.status : 500, { error: error instanceof LoginError ? error.message : 'Could not complete the operation. Check server storage and try again.' });
+      send(error instanceof LoginError ? error.status : 500, { error: error instanceof LoginError ? error.message : 'Could not complete the operation. Check server storage and try again.', ...(error instanceof LoginError ? error.details : {}) });
     }
     return true;
   };
