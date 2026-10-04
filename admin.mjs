@@ -5,6 +5,7 @@ import { LoginError } from './pw-auth.mjs';
 const assets = new Map([
   ['/admin', ['index.html', 'text/html; charset=utf-8']],
   ['/admin/', ['index.html', 'text/html; charset=utf-8']],
+  ['/admin/browser.js', ['browser.js', 'text/javascript; charset=utf-8']],
   ['/admin/phone.js', ['phone.js', 'text/javascript; charset=utf-8']],
   ['/admin/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/admin/api-response.js', ['api-response.js', 'text/javascript; charset=utf-8']],
@@ -25,7 +26,7 @@ async function json(req) {
     return value;
   } catch { throw new LoginError(400, 'Invalid JSON.'); }
 }
-export function createAdmin({ token, pw, now = Date.now, publicOrigin = process.env.PUBLIC_ORIGIN }) {
+export function createAdmin({ token, pw, browser, now = Date.now, publicOrigin = process.env.PUBLIC_ORIGIN }) {
   const sessions = new Map();
   let attempts = 0, resetAt = 0;
   const cookie = (value, age) => `pw_owner=${value}; Path=/admin; HttpOnly; Secure; SameSite=Strict; Max-Age=${age}`;
@@ -50,34 +51,43 @@ export function createAdmin({ token, pw, now = Date.now, publicOrigin = process.
         const expected = publicOrigin || `${req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http'}://${req.headers.host}`;
         if (req.headers.origin !== expected) throw new LoginError(403, 'Open this page directly on the relay domain and try again.');
       }
-      for (const [id, s] of sessions) if (s.expiresAt <= now()) { sessions.delete(id); pw.cancelPending(id); }
+      for (const [id, s] of sessions) if (s.expiresAt <= now()) { sessions.delete(id); pw.cancelPending(id); void browser?.close(id); }
       if (url.pathname === '/admin/api/login' && req.method === 'POST') {
         if (now() >= resetAt) { attempts = 0; resetAt = now() + 60000; }
         if (++attempts > 10) throw new LoginError(429, 'Too many unlock attempts. Wait one minute.');
         const body = await json(req);
         if (typeof body.key !== 'string' || !equal(body.key, token)) throw new LoginError(401, 'Incorrect owner key.');
-        if (sessions.size >= 16) { const old = sessions.keys().next().value; sessions.delete(old); pw.cancelPending(old); }
+        if (sessions.size >= 16) { const old = sessions.keys().next().value; sessions.delete(old); pw.cancelPending(old); void browser?.close(old); }
         const id = randomBytes(32).toString('hex'), csrf = randomBytes(32).toString('hex');
         sessions.set(id, { csrf, expiresAt: now() + 8 * 3600000 });
         res.setHeader('Set-Cookie', cookie(id, 8 * 3600));
-        send(200, { csrf, pw: pw.state() }); return true;
+        send(200, { csrf, pw: pw.state(), browser: browser?.state(id) }); return true;
       }
       const id = /(?:^|;\s*)pw_owner=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie || '')?.[1];
       const session = sessions.get(id);
       if (!session) throw new LoginError(401, 'Verify owner access first.');
-      if (url.pathname === '/admin/api/session' && req.method === 'GET') { send(200, { csrf: session.csrf, pw: pw.state() }); return true; }
+      if (url.pathname === '/admin/api/session' && req.method === 'GET') { send(200, { csrf: session.csrf, pw: pw.state(), browser: browser?.state(id) }); return true; }
+      if (url.pathname === '/admin/api/pw/browser/frame' && req.method === 'GET' && browser) {
+        const frame = await browser.frame(id);
+        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': frame.length }); res.end(frame); return true;
+      }
+      if (url.pathname === '/admin/api/pw/browser/status' && req.method === 'GET' && browser) { send(200, browser.state(id)); return true; }
       if (req.method !== 'POST') throw new LoginError(405, 'Use POST.');
       if (!equal(req.headers['x-csrf-token'] || '', session.csrf)) throw new LoginError(403, 'Session check failed. Reload the page.');
       const body = await json(req);
       switch (url.pathname) {
         case '/admin/api/logout':
-          sessions.delete(id); pw.cancelPending(id);
+          sessions.delete(id); pw.cancelPending(id); void browser?.close(id);
           res.setHeader('Set-Cookie', cookie('', 0)); send(200, { ok: true }); break;
+        case '/admin/api/pw/browser/start': send(200, await browser.start(id)); break;
+        case '/admin/api/pw/browser/input': send(200, await browser.input(id, body)); break;
+        case '/admin/api/pw/browser/save': send(200, await browser.save(id)); break;
+        case '/admin/api/pw/browser/close': await browser.close(id); send(200, { ok: true }); break;
         case '/admin/api/pw/send-otp': send(200, await pw.sendOtp(id, body.phone, body.captchaToken)); break;
         case '/admin/api/pw/verify-otp': send(200, await pw.verifyOtp(id, body.otp)); break;
         case '/admin/api/pw/import-token': send(200, await pw.importToken(body.token, body.refreshToken, body.deviceId)); break;
         case '/admin/api/pw/refresh': await pw.refresh({ force: true }); send(200, pw.state()); break;
-        case '/admin/api/pw/disconnect': send(200, await pw.disconnect()); break;
+        case '/admin/api/pw/disconnect': await browser?.close(id); send(200, await pw.disconnect()); break;
         default: throw new LoginError(404, 'Not found.');
       }
     } catch (error) {

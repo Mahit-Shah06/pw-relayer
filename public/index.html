@@ -24,6 +24,7 @@
     </section>
     <section class="card" id="account-panel" hidden>
       <div class="card-heading"><span class="step">02 / PW ACCOUNT</span><button id="lock" class="text-button" type="button">Sign out</button></div>
+      <button id="browser-open" type="button" class="secondary" hidden>Open PW browser</button>
       <div id="login-panel">
         <div class="method-switch" role="group" aria-label="Connection method">
           <button id="use-token" type="button" aria-pressed="true">Existing session</button>
@@ -66,6 +67,14 @@
     </div>
     </div>
     <footer>Personal relay · Not an official Physics Wallah website.<br>Your OTP is used for verification and is never saved.</footer>
+    <section id="browser-room" class="browser-room" aria-label="Remote PW browser" hidden>
+      <div class="browser-toolbar"><strong>PW browser · www.pw.live</strong><button id="browser-close" type="button" class="secondary">Close browser</button></div>
+      <p id="browser-state" role="status">Opening PW…</p>
+      <p class="hint">This is a browser on your VPS. Click a field below, then type or use the text box. The session closes after 10 minutes. Only you complete OTP and CAPTCHA.</p>
+      <div class="browser-viewport"><canvas id="browser-screen" width="1000" height="760" tabindex="0" aria-label="Interactive remote PW page. Click to focus, then type."></canvas></div>
+      <form id="browser-type" class="browser-input"><input id="browser-text" type="password" autocomplete="off" maxlength="256" placeholder="Text for the selected PW field" aria-label="Text to type into PW"><button type="submit">Type into PW</button><button id="browser-enter" type="button" class="secondary">Enter ↵</button></form>
+      <button id="browser-save" type="button" disabled>Save session &amp; close</button>
+    </section>
   </main>
 </body>
 </html>

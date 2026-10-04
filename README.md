@@ -1,6 +1,6 @@
 # pw-relayer
 
-A dependency-free Node.js 22 HTTP connector, HLS relay, and local file store. Configure direct media, document, or data URLs. Includes an owner-only PW login page with OTP and existing-session import. The PW adapter follows the request format in the existing local PW client; it is not a documented public integration and has not been validated with a real PW account. Automatic renewal is supported when a valid PW refresh token is available. Course discovery, DRM handling, and a viewer/player are not implemented.
+A Node.js 22 HTTP connector, HLS relay, and local file store. Configure direct media, document, or data URLs. Includes an owner-only PW login page with OTP and existing-session import. The PW adapter follows the request format in the existing local PW client; it is not a documented public integration and has not been validated with a real PW account. Automatic renewal is supported when a valid PW refresh token is available. Course discovery, DRM handling, and a viewer/player are not implemented.
 
 ## Start on a VPS
 
@@ -194,3 +194,24 @@ Successful OTP login now retains `refresh_token` automatically when PW returns o
 The refresh request follows PW's public web SDK: `POST https://api.penpencil.co/v3/oauth/refresh-token`, with `client_id`, `refresh_token`, and `client_secret` when configured. `PW_CLIENT_ID` defaults to `system-admin`. If your PW client requires a client secret, set `PW_CLIENT_SECRET` privately in `.env` using the client configuration from your own official PW login request, then restart the process. This is separate from the account access/refresh tokens; do not commit it or send it in chat. The connector does not invent or bypass client credentials. Missing required client configuration can cause renewal to be rejected.
 
 Renewal is covered by simulated provider tests; live PW acceptance still needs the **Test renewal now** check with your session. Signing out, account restrictions, token rotation on another device, or PW security checks can still require another login. Do not run multiple relay instances against the same session directory. A disk-write failure after provider rotation is reported as a storage failure; fix storage and reconnect before relying on persistence.
+
+
+## Interactive PW browser (Ubuntu VPS)
+
+**Open PW browser** opens the official `https://www.pw.live/` page in an isolated browser on the VPS. Its screen and input controls are available only after owner authentication. You enter the phone number and OTP on that page and personally complete any CAPTCHA. No origin rewriting, challenge solver, or automatic SMS requests are used. PW can still reject a VPS browser or IP.
+
+After PW returns a successful login response, click **Save session & close**. The server verifies the access token, saves it and any returned refresh token encrypted, and destroys the browser session. Tokens are not sent to the relay UI. Automatic renewal then uses the existing refresh workflow; it cannot guarantee a permanent login.
+
+On Ubuntu, install the supported browser and display packages:
+
+```sh
+npm ci
+sudo snap install chromium
+sudo apt-get install -y xvfb
+```
+
+Set `PW_BROWSER_ENABLED=true` and `PW_BROWSER_EXECUTABLE=/snap/bin/chromium` in `.env`, then restart PM2. `PW_BROWSER_EXECUTABLE` optionally selects an installed Chromium binary. Chromium sandboxing is required; this feature does not launch with `--no-sandbox`. The stock Alpine Docker image does not include the interactive browser runtime; leave this option disabled there.
+
+One browser may be open at a time. The session expires after ten minutes, closes on owner logout or service shutdown, and does not preserve a browser profile across restarts. Screenshots are transient, sent with no-store headers, and never written to disk by the application. Input is not logged. Opening the browser does not send an OTP: the owner controls the PW page. Navigation is restricted to PW, with a limited list of resource providers. Downloads, popups, arbitrary URLs, and developer-tools shortcuts are unavailable.
+
+On small screens the remote page scrolls horizontally. Tap a PW input first, enter text using the text box below the screen, then choose **Type into PW**. This clears the text box immediately. On desktop you can also click and type directly into the remote screen.

@@ -1,5 +1,6 @@
 import http from 'node:http';
 import { createPwAuth } from './pw-auth.mjs';
+import { createPwBrowser } from './pw-browser.mjs';
 import { createAdmin } from './admin.mjs';
 import { readFile, mkdir, rename, unlink, stat } from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
@@ -9,11 +10,12 @@ import { createHmac, timingSafeEqual, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export function createApp({ configPath = process.env.CONFIG_PATH || './sources.json', dataDir = process.env.DATA_DIR || './data', token = process.env.ACCESS_TOKEN, pwRequest = fetch, pwCaptchaSiteKey = process.env.PW_CAPTCHA_SITE_KEY || '', sourceRequest = fetch, interval = Number(process.env.SYNC_INTERVAL_SECONDS || 300) * 1000 } = {}) {
+export function createApp({ configPath = process.env.CONFIG_PATH || './sources.json', dataDir = process.env.DATA_DIR || './data', token = process.env.ACCESS_TOKEN, pwRequest = fetch, pwBrowserEnabled = process.env.PW_BROWSER_ENABLED === 'true', pwBrowserLaunch, pwCaptchaSiteKey = process.env.PW_CAPTCHA_SITE_KEY || '', sourceRequest = fetch, interval = Number(process.env.SYNC_INTERVAL_SECONDS || 300) * 1000 } = {}) {
   if (!token || token.length < 32) throw new Error('ACCESS_TOKEN must contain at least 32 characters');
   if (!Number.isFinite(interval) || interval < 1000) throw new Error('Invalid sync interval');
   const pw = createPwAuth({ dataDir, secret: token, request: pwRequest, captchaSiteKey: pwCaptchaSiteKey });
-  const admin = createAdmin({ token, pw });
+  const browser = createPwBrowser({ pw, enabled: pwBrowserEnabled, launchBrowser: pwBrowserLaunch });
+  const admin = createAdmin({ token, pw, browser });
   const states = new Map();
   let timer, syncing = false, active = 0;
   function equal(a, b) { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); }
@@ -204,7 +206,7 @@ export function createApp({ configPath = process.env.CONFIG_PATH || './sources.j
     pw.startRenewal();
     void sync(); timer = setInterval(sync, interval); timer.unref();
     return server.address();
-  }, async stop() { clearInterval(timer); const closed = new Promise(resolve => server.close(resolve)); server.closeAllConnections(); await pw.stopRenewal(); await closed; } };
+  }, async stop() { clearInterval(timer); const closed = new Promise(resolve => server.close(resolve)); server.closeAllConnections(); await browser.close(); await pw.stopRenewal(); await closed; } };
 }
 export async function startServer() {
   const app = createApp();

@@ -1,10 +1,13 @@
+import { setupBrowser } from './browser.js';
 import { parseApiResponse } from './api-response.js';
 import { normalizePhone } from './phone.js';
 const $ = id => document.getElementById(id);
 let csrf = '', cooldown = 0, working = false, editingSession = false;
+const remoteBrowser = setupBrowser({ api, action, account, message });
 let captchaKey = '', captchaToken = '', captchaWidget = null, captchaLoading = false;
 function message(text, error = false) { $('message').textContent = text; $('message').classList.toggle('error', error); }
 function locked() {
+  remoteBrowser.hide();
   captchaToken = ''; captchaKey = '';
   if (captchaWidget !== null && window.turnstile) window.turnstile.remove(captchaWidget);
   captchaWidget = null;
@@ -57,7 +60,7 @@ $('unlock-form').addEventListener('submit', event => {
   event.preventDefault();
   void action(async () => {
     const key = $('owner-key').value; $('owner-key').value = '';
-    const data = await api('login', { key }); csrf = data.csrf;
+    const data = await api('login', { key }); csrf = data.csrf; remoteBrowser.configure(data.browser);
     message('Owner access verified.'); account(data.pw);
   });
 });
@@ -164,7 +167,7 @@ $('lock').addEventListener('click', () => void action(async () => { await api('l
 $('disconnect').addEventListener('click', () => void action(async () => { const data = await api('pw/disconnect', {}); account(data); message('Saved PW session removed from this relay.'); }));
 setInterval(tick, 1000);
 (async () => {
-  try { const data = await api('session'); csrf = data.csrf; message(''); account(data.pw); }
+  try { const data = await api('session'); csrf = data.csrf; remoteBrowser.configure(data.browser); message(''); account(data.pw); }
   catch (error) {
     locked();
     if (error.status === 401) message('Enter your owner key to connect your PW account.');

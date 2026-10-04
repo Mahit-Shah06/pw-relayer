@@ -82,3 +82,13 @@ a { color: #c4b5ff; }
 #renewal-status { margin-bottom: 12px; }
 
 .captcha { margin-top: 18px; min-height: 0; }
+
+.browser-room { position: fixed; inset: 12px; z-index: 50; background: #111119; border: 1px solid #363244; border-radius: 16px; padding: 20px; overflow: auto; box-shadow: 0 0 0 30px #08080ce8; }
+.browser-toolbar, .browser-input { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.browser-toolbar button, .browser-input button { width: auto; margin: 0; flex-shrink: 0; }
+.browser-viewport { max-width: 1000px; margin: 0 auto; overflow: auto; }
+#browser-screen { display: block; width: 100%; min-width: 650px; background: #222; cursor: default; outline-color: #a78bfa; }
+.browser-input { margin: 16px 0; }
+.browser-input input { margin: 0; }
+#browser-open { margin-bottom: 20px; }
+@media(max-width: 600px) { .browser-room { inset: 4px; padding: 12px; } .browser-input { flex-wrap: wrap; } .browser-input input { width: 100%; } }
