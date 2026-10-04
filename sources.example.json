@@ -1,0 +1,20 @@
+{
+  "sources": [
+    {
+      "id": "lecture",
+      "type": "hls",
+      "url": "https://media.example.com/live/index.m3u8",
+      "allowedOrigins": ["https://cdn.example.com"],
+      "headerEnv": {"Authorization": "SOURCE_AUTHORIZATION"}
+    },
+    {
+      "id": "notes",
+      "type": "file",
+      "url": "https://media.example.com/notes.pdf",
+      "contentType": "application/pdf",
+      "maxBytes": 104857600,
+      "headerEnv": {"Authorization": "SOURCE_AUTHORIZATION"}
+    },
+    {"id": "data", "type": "relay", "url": "https://media.example.com/data.json"}
+  ]
+}
